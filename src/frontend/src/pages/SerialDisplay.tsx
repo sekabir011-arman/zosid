@@ -2,11 +2,15 @@ import {
   AlertTriangle,
   Maximize2,
   MonitorPlay,
+  Plus,
+  Search,
+  UserPlus,
   Users,
   Volume2,
   VolumeX,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -27,6 +31,7 @@ interface SerialEntry {
   phone: string;
   arrivalTime: string;
   status: "waiting" | "in-progress" | "done";
+  walkIn?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -37,6 +42,52 @@ function todayKey(): string {
 
 const DEFAULT_VIDEO_URL =
   "https://www.youtube.com/embed/videoseries?list=PLbpi6ZahtOH6Ar_3GPy3workfN8S9-fvo&autoplay=1&mute=1&loop=1&controls=0&showinfo=0&rel=0&modestbranding=1";
+
+function uid(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function nowTime(): string {
+  const d = new Date();
+  return d.toTimeString().slice(0, 5);
+}
+
+function todayKeyLocal(): string {
+  return `clinic_serials_${new Date().toISOString().slice(0, 10)}`;
+}
+
+/** Returns true if the current logged-in user is a Consultant Doctor or Staff */
+function canAddWalkIn(): boolean {
+  try {
+    const raw = localStorage.getItem("medicare_current_doctor");
+    if (!raw) return false;
+    const user = JSON.parse(raw) as { role?: string };
+    const allowedRoles = ["doctor", "consultant_doctor", "staff", "admin"];
+    return allowedRoles.includes(user.role ?? "");
+  } catch {
+    return false;
+  }
+}
+
+/** All patients from localStorage for search */
+function getAllPatientNames(): Array<{ name: string; phone: string }> {
+  const results: Array<{ name: string; phone: string }> = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith("patients_")) continue;
+      const arr = JSON.parse(localStorage.getItem(key) || "[]") as Array<{
+        fullName?: string;
+        phone?: string;
+      }>;
+      for (const p of arr) {
+        if (p.fullName)
+          results.push({ name: p.fullName, phone: p.phone ?? "" });
+      }
+    }
+  } catch {}
+  return results;
+}
 
 /** Resolve the video embed URL for the serial display.
  *  Reads serialDisplayVideoUrl_{doctorEmail} from localStorage.
@@ -210,6 +261,234 @@ async function tryPullQueueFromCanister(): Promise<SerialEntry[]> {
   }
 }
 
+// ── Walk-In Modal ─────────────────────────────────────────────────────────────
+
+interface WalkInModalProps {
+  open: boolean;
+  onClose: () => void;
+  onAdd: (entry: Omit<SerialEntry, "id" | "serial">) => void;
+}
+
+function WalkInModal({ open, onClose, onAdd }: WalkInModalProps) {
+  const [mode, setMode] = useState<"search" | "new">("search");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [newName, setNewName] = useState("");
+  const [selectedPatient, setSelectedPatient] = useState<{
+    name: string;
+    phone: string;
+  } | null>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  const allPatients = getAllPatientNames();
+  const filtered = searchQuery.trim()
+    ? allPatients.filter((p) =>
+        p.name.toLowerCase().includes(searchQuery.toLowerCase()),
+      )
+    : [];
+
+  function handleAdd() {
+    if (mode === "search") {
+      if (!selectedPatient) return;
+      onAdd({
+        patientName: selectedPatient.name,
+        phone: selectedPatient.phone,
+        arrivalTime: nowTime(),
+        status: "waiting",
+        walkIn: true,
+      });
+    } else {
+      const name =
+        newName.trim() || `Walk-in #${Math.floor(Math.random() * 90) + 10}`;
+      onAdd({
+        patientName: name,
+        phone: "",
+        arrivalTime: nowTime(),
+        status: "waiting",
+        walkIn: true,
+      });
+    }
+    // Reset
+    setSearchQuery("");
+    setNewName("");
+    setSelectedPatient(null);
+    setMode("search");
+    onClose();
+  }
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+      data-ocid="serial_display.walkin_modal"
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ duration: 0.2 }}
+        className="bg-gray-900 border border-gray-700 rounded-2xl p-5 w-full max-w-sm space-y-4"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-emerald-600 flex items-center justify-center">
+              <UserPlus className="w-4 h-4 text-white" />
+            </div>
+            <h2 className="font-bold text-white text-lg">
+              Add Walk-In Patient
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 transition-colors"
+            aria-label="Close"
+            data-ocid="serial_display.walkin_close_button"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Mode toggle */}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setMode("search");
+              setSelectedPatient(null);
+            }}
+            className={`flex-1 py-2 rounded-xl text-sm font-medium transition-colors ${
+              mode === "search"
+                ? "bg-emerald-600 text-white"
+                : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+            }`}
+            data-ocid="serial_display.walkin_search_tab"
+          >
+            Registered Patient
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode("new");
+              setSelectedPatient(null);
+            }}
+            className={`flex-1 py-2 rounded-xl text-sm font-medium transition-colors ${
+              mode === "new"
+                ? "bg-emerald-600 text-white"
+                : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+            }`}
+            data-ocid="serial_display.walkin_new_tab"
+          >
+            New Walk-In
+          </button>
+        </div>
+
+        {/* Content */}
+        {mode === "search" ? (
+          <div className="space-y-3" ref={searchRef}>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+              <input
+                type="text"
+                placeholder="Search patient name…"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setSelectedPatient(null);
+                }}
+                className="w-full bg-gray-800 border border-gray-600 rounded-xl pl-9 pr-3 py-2.5 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                data-ocid="serial_display.walkin_search_input"
+              />
+            </div>
+            {selectedPatient ? (
+              <div className="flex items-center gap-2 bg-emerald-900/30 border border-emerald-700/40 rounded-xl px-3 py-2">
+                <div className="w-7 h-7 rounded-full bg-emerald-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                  {selectedPatient.name[0]}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white text-sm font-semibold truncate">
+                    {selectedPatient.name}
+                  </p>
+                  {selectedPatient.phone && (
+                    <p className="text-gray-400 text-xs">
+                      {selectedPatient.phone}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              filtered.length > 0 && (
+                <div className="max-h-36 overflow-y-auto rounded-xl border border-gray-700 bg-gray-800 divide-y divide-gray-700">
+                  {filtered.slice(0, 8).map((p) => (
+                    <button
+                      key={p.name}
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm text-white hover:bg-gray-700 transition-colors flex items-center justify-between gap-2"
+                      onClick={() => {
+                        setSelectedPatient(p);
+                        setSearchQuery(p.name);
+                      }}
+                      data-ocid="serial_display.walkin_patient_option"
+                    >
+                      <span className="font-medium truncate">{p.name}</span>
+                      {p.phone && (
+                        <span className="text-gray-400 text-xs shrink-0">
+                          {p.phone}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <label
+              htmlFor="walkin-name"
+              className="text-sm text-gray-400 font-medium"
+            >
+              Walk-in name (optional)
+            </label>
+            <input
+              id="walkin-name"
+              type="text"
+              placeholder="e.g. Walk-in #3 or leave blank for auto"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-600 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-emerald-500 transition-colors"
+              data-ocid="serial_display.walkin_name_input"
+            />
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div className="flex gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors"
+            data-ocid="serial_display.walkin_cancel_button"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleAdd}
+            disabled={mode === "search" && !selectedPatient}
+            className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors flex items-center justify-center gap-1.5"
+            data-ocid="serial_display.walkin_add_button"
+          >
+            <Plus className="w-4 h-4" />
+            Add to Queue
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 function SerialDisplayInner() {
@@ -220,6 +499,8 @@ function SerialDisplayInner() {
   const [showVideoPanel, setShowVideoPanel] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string>(() => resolveVideoUrl());
+  const [showWalkIn, setShowWalkIn] = useState(false);
+  const allowWalkIn = canAddWalkIn();
   const prevNowServingIdRef = useRef<string | null>(null);
   const lastCanisterPollRef = useRef<number>(0);
 
@@ -290,7 +571,7 @@ function SerialDisplayInner() {
     const load = async () => {
       try {
         // 1. Read localStorage (fast, always)
-        const raw = localStorage.getItem(todayKey());
+        const raw = localStorage.getItem(todayKeyLocal());
         const localEntries = safeParseQueue(raw);
 
         // 2. Try canister every 5 seconds for cross-device sync
@@ -364,6 +645,26 @@ function SerialDisplayInner() {
     }
   };
 
+  function handleAddWalkIn(entry: Omit<SerialEntry, "id" | "serial">) {
+    const next =
+      serials.length > 0 ? Math.max(...serials.map((s) => s.serial)) + 1 : 1;
+    const newEntry: SerialEntry = {
+      ...entry,
+      id: uid(),
+      serial: next,
+    };
+    const updated = [...serials, newEntry];
+    setSerials(updated);
+    // Persist to localStorage
+    try {
+      localStorage.setItem(todayKeyLocal(), JSON.stringify(updated));
+      // Broadcast to other tabs
+      const bc = new BroadcastChannel("clinic_queue_sync");
+      bc.postMessage(updated);
+      bc.close();
+    } catch {}
+  }
+
   const currentTimeStr = time.toLocaleTimeString("en-BD", {
     hour: "2-digit",
     minute: "2-digit",
@@ -404,6 +705,20 @@ function SerialDisplayInner() {
 
         {/* Controls */}
         <div className="flex items-center gap-2 flex-1 justify-end">
+          {/* Walk-In button — only for Consultant Doctor and Staff */}
+          {allowWalkIn && (
+            <button
+              type="button"
+              onClick={() => setShowWalkIn(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors"
+              title="Add walk-in patient to queue"
+              data-ocid="serial_display.walkin_button"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span className="hidden sm:inline">Walk-In</span>
+            </button>
+          )}
+
           {/* Online status indicator */}
           <div
             className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium ${
@@ -698,11 +1013,18 @@ function SerialDisplayInner() {
                           Arrived: {s.arrivalTime}
                         </p>
                       </div>
-                      {idx === 0 && (
-                        <span className="text-[10px] bg-amber-500 text-black font-bold px-1.5 py-0.5 rounded shrink-0">
-                          NEXT
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {s.walkIn && (
+                          <span className="text-[10px] bg-emerald-600 text-white font-bold px-1.5 py-0.5 rounded">
+                            Walk-In
+                          </span>
+                        )}
+                        {idx === 0 && (
+                          <span className="text-[10px] bg-amber-500 text-black font-bold px-1.5 py-0.5 rounded">
+                            NEXT
+                          </span>
+                        )}
+                      </div>
                     </motion.div>
                   ))}
                 </AnimatePresence>
@@ -771,6 +1093,17 @@ function SerialDisplayInner() {
           </motion.div>
         )}
       </div>
+
+      {/* Walk-In Modal */}
+      <AnimatePresence>
+        {showWalkIn && (
+          <WalkInModal
+            open={showWalkIn}
+            onClose={() => setShowWalkIn(false)}
+            onAdd={handleAddWalkIn}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

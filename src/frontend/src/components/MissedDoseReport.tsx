@@ -2,6 +2,7 @@
  * MissedDoseReport — medication administration report for Consultant Doctor and MO.
  * Shows all medications for a patient with Given / Not Given / Delayed status.
  * Accessible from patient profile Prescriptions tab.
+ * Escalated drugs (2+ consecutive missed) are shown in red with ⚠️ icon and consecutive count column.
  */
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,33 @@ function getDatesInRange(start: string, end: string): string[] {
   return dates;
 }
 
+/** Count consecutive "not_given" doses (from most recent backwards) per drug */
+function buildConsecutiveMap(
+  records: MedAdminRecord[],
+): Record<string, number> {
+  const byDrug: Record<string, MedAdminRecord[]> = {};
+  for (const r of records) {
+    if (!byDrug[r.drugName]) byDrug[r.drugName] = [];
+    byDrug[r.drugName].push(r);
+  }
+
+  const result: Record<string, number> = {};
+  for (const [drug, drugRecords] of Object.entries(byDrug)) {
+    const sorted = [...drugRecords].sort((a, b) => {
+      const da = `${a.date} ${a.scheduledTime}`;
+      const db = `${b.date} ${b.scheduledTime}`;
+      return da.localeCompare(db);
+    });
+    let count = 0;
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      if (sorted[i].status === "not_given") count++;
+      else break;
+    }
+    result[drug] = count;
+  }
+  return result;
+}
+
 export default function MissedDoseReport({
   patientId,
   patientName,
@@ -58,11 +86,15 @@ export default function MissedDoseReport({
       records.push(...loadMedAdminRecords(patientId, d));
     }
     return records.sort((a, b) => {
-      // Sort by date then scheduled time
       if (a.date !== b.date) return a.date.localeCompare(b.date);
       return a.scheduledTime.localeCompare(b.scheduledTime);
     });
   }, [patientId, startDate, endDate]);
+
+  const consecutiveMap = useMemo(
+    () => buildConsecutiveMap(allRecords),
+    [allRecords],
+  );
 
   const filtered = useMemo(() => {
     if (filterTab === "all") return allRecords;
@@ -73,56 +105,41 @@ export default function MissedDoseReport({
   const delayedCount = allRecords.filter((r) => r.status === "delayed").length;
   const givenCount = allRecords.filter((r) => r.status === "given").length;
 
-  // Check for ≥2 consecutive missed doses for same drug
-  const consecutiveMissed = useMemo(() => {
-    const byDrug: Record<string, MedAdminRecord[]> = {};
-    for (const r of allRecords) {
-      if (!byDrug[r.drugName]) byDrug[r.drugName] = [];
-      byDrug[r.drugName].push(r);
-    }
-    const alerts: string[] = [];
-    for (const [drug, records] of Object.entries(byDrug)) {
-      const notGiven = records.filter((r) => r.status === "not_given");
-      if (notGiven.length >= 2) {
-        alerts.push(`${drug} (${notGiven.length}x not given)`);
-      }
-    }
-    return alerts;
-  }, [allRecords]);
+  // Drugs with 2+ consecutive missed doses
+  const escalatedDrugs = useMemo(
+    () =>
+      Object.entries(consecutiveMap)
+        .filter(([, count]) => count >= 2)
+        .map(([drug, count]) => `${drug} (${count}×)`),
+    [consecutiveMap],
+  );
 
   function exportReport() {
     const header = [
-      "Medication Administration Report",
-      `Patient: ${patientName}`,
-      `Period: ${startDate} to ${endDate}`,
-      `Generated: ${new Date().toLocaleString()}`,
-      "",
-      "Drug Name | Dose | Date | Scheduled Time | Status | Recorded By",
-      "─".repeat(80),
+      "Drug Name,Dose,Date,Scheduled Time,Status,Consecutive Missed,Recorded By,Role",
     ];
-    const rows = allRecords.map(
-      (r) =>
-        `${r.drugName} | ${r.dose || "—"} | ${r.date} | ${r.scheduledTime} | ${r.status.toUpperCase()} | ${r.recordedBy} (${r.recordedByRole})`,
-    );
+    const rows = allRecords.map((r) => {
+      const consec = consecutiveMap[r.drugName] ?? 0;
+      return `"${r.drugName}","${r.dose || ""}","${r.date}","${r.scheduledTime}","${r.status}","${consec}","${r.recordedBy}","${r.recordedByRole}"`;
+    });
     const summary = [
       "",
-      `Summary: Given: ${givenCount} | Not Given: ${missedCount} | Delayed: ${delayedCount}`,
+      `"Summary: Given: ${givenCount} | Not Given: ${missedCount} | Delayed: ${delayedCount}"`,
     ];
-    const lines = [...header, ...rows, ...summary];
-
-    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+    const csv = [...header, ...rows, ...summary].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `MedAdmin_${patientName.replace(/\s/g, "_")}_${today}.txt`;
+    a.download = `MedAdmin_${patientName.replace(/\s/g, "_")}_${startDate}_to_${endDate}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
 
   return (
     <div className="space-y-4" data-ocid="missed_dose_report.container">
-      {/* Alert for consecutive missed doses */}
-      {consecutiveMissed.length > 0 && (
+      {/* Alert for escalated drugs */}
+      {escalatedDrugs.length > 0 && (
         <div
           className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-4"
           data-ocid="missed_dose_report.alert"
@@ -130,11 +147,12 @@ export default function MissedDoseReport({
           <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-semibold text-red-800">
-              Consecutive Missed Dose Alert
+              ⚠️ Escalated — Consecutive Missed Dose Alert
             </p>
             <p className="text-xs text-red-700 mt-1">
-              The following drugs have been missed 2+ consecutive times:{" "}
-              {consecutiveMissed.join(", ")}
+              The following drugs have been missed 2+ consecutive times and
+              Consultant has been notified:{" "}
+              <strong>{escalatedDrugs.join(", ")}</strong>
             </p>
           </div>
         </div>
@@ -159,7 +177,7 @@ export default function MissedDoseReport({
         </div>
       </div>
 
-      {/* Date range filter */}
+      {/* Date range filter + export */}
       <div className="flex flex-wrap gap-3 items-end">
         <div className="space-y-1">
           <label
@@ -201,7 +219,7 @@ export default function MissedDoseReport({
           data-ocid="missed_dose_report.export_button"
         >
           <Download className="w-3.5 h-3.5" />
-          Export
+          Export CSV
         </Button>
       </div>
 
@@ -270,62 +288,90 @@ export default function MissedDoseReport({
                     <th className="text-left py-2 px-3 font-semibold text-muted-foreground">
                       Status
                     </th>
+                    <th className="text-center py-2 px-3 font-semibold text-muted-foreground">
+                      Consecutive Missed
+                    </th>
                     <th className="text-left py-2 px-3 font-semibold text-muted-foreground">
                       Recorded By
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((r, i) => (
-                    <tr
-                      key={`${r.drugName}-${r.date}-${r.scheduledTime}-${i}`}
-                      className={cn(
-                        "border-b border-border/50",
-                        r.status === "given" && "bg-green-50/50",
-                        r.status === "not_given" && "bg-red-50/50",
-                        r.status === "delayed" && "bg-orange-50/50",
-                      )}
-                      data-ocid={`missed_dose_report.row.${i}`}
-                    >
-                      <td className="py-2 px-3 font-medium">{r.drugName}</td>
-                      <td className="py-2 px-3 text-muted-foreground">
-                        {r.dose || "—"}
-                      </td>
-                      <td className="py-2 px-3 text-muted-foreground">
-                        {r.date}
-                      </td>
-                      <td className="py-2 px-3 font-mono">{r.scheduledTime}</td>
-                      <td className="py-2 px-3">
-                        <Badge
-                          className={cn(
-                            "text-[10px] font-semibold",
+                  {filtered.map((r, i) => {
+                    const consec = consecutiveMap[r.drugName] ?? 0;
+                    const isEscalated = r.status === "not_given" && consec >= 2;
+                    return (
+                      <tr
+                        key={`${r.drugName}-${r.date}-${r.scheduledTime}-${i}`}
+                        className={cn(
+                          "border-b border-border/50",
+                          isEscalated && "bg-red-100/60",
+                          !isEscalated &&
                             r.status === "given" &&
-                              "bg-green-100 text-green-700 border border-green-200",
+                            "bg-green-50/50",
+                          !isEscalated &&
                             r.status === "not_given" &&
-                              "bg-red-100 text-red-700 border border-red-200",
-                            r.status === "delayed" &&
-                              "bg-orange-100 text-orange-700 border border-orange-200",
-                            r.status === "pending" &&
-                              "bg-muted text-muted-foreground border border-border",
+                            "bg-red-50/50",
+                          r.status === "delayed" && "bg-orange-50/50",
+                        )}
+                        data-ocid={`missed_dose_report.row.${i}`}
+                      >
+                        <td className="py-2 px-3 font-medium">
+                          {isEscalated && <span className="mr-1">⚠️</span>}
+                          {r.drugName}
+                        </td>
+                        <td className="py-2 px-3 text-muted-foreground">
+                          {r.dose || "—"}
+                        </td>
+                        <td className="py-2 px-3 text-muted-foreground">
+                          {r.date}
+                        </td>
+                        <td className="py-2 px-3 font-mono">
+                          {r.scheduledTime}
+                        </td>
+                        <td className="py-2 px-3">
+                          <Badge
+                            className={cn(
+                              "text-[10px] font-semibold",
+                              r.status === "given" &&
+                                "bg-green-100 text-green-700 border border-green-200",
+                              r.status === "not_given" &&
+                                "bg-red-100 text-red-700 border border-red-200",
+                              r.status === "delayed" &&
+                                "bg-orange-100 text-orange-700 border border-orange-200",
+                              r.status === "pending" &&
+                                "bg-muted text-muted-foreground border border-border",
+                            )}
+                          >
+                            {r.status === "given"
+                              ? "✅ Given"
+                              : r.status === "not_given"
+                                ? "❌ Not Given"
+                                : r.status === "delayed"
+                                  ? "⏱ Delayed"
+                                  : "Pending"}
+                          </Badge>
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                          {consec >= 2 ? (
+                            <span className="font-bold text-red-700">
+                              {consec}×
+                            </span>
+                          ) : consec > 0 ? (
+                            <span className="text-orange-600">{consec}×</span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
                           )}
-                        >
-                          {r.status === "given"
-                            ? "✅ Given"
-                            : r.status === "not_given"
-                              ? "❌ Not Given"
-                              : r.status === "delayed"
-                                ? "⏱ Delayed"
-                                : "Pending"}
-                        </Badge>
-                      </td>
-                      <td className="py-2 px-3 text-muted-foreground">
-                        {r.recordedBy}{" "}
-                        <span className="text-muted-foreground/60">
-                          ({r.recordedByRole})
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-2 px-3 text-muted-foreground">
+                          {r.recordedBy}{" "}
+                          <span className="text-muted-foreground/60">
+                            ({r.recordedByRole})
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

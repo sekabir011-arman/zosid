@@ -50,6 +50,7 @@ import {
   savePatientRegistry,
   saveRegistry,
   useEmailAuth,
+  useInactivityTimer,
 } from "./hooks/useEmailAuth";
 import type { DoctorAccount, PatientAccount } from "./hooks/useEmailAuth";
 import { useMigration } from "./hooks/useMigration";
@@ -1026,6 +1027,55 @@ function PendingApprovalsPanel() {
   );
 }
 
+// ── Inactivity Warning Overlay ────────────────────────────────────────────────
+
+function InactivityWarningOverlay({
+  secondsRemaining,
+  onStayLoggedIn,
+}: {
+  secondsRemaining: number;
+  onStayLoggedIn: () => void;
+}) {
+  const minutes = Math.floor(secondsRemaining / 60);
+  const secs = secondsRemaining % 60;
+  const timeStr =
+    minutes > 0 ? `${minutes}:${secs.toString().padStart(2, "0")}` : `${secs}s`;
+
+  return (
+    <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.92 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-card border border-border rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center"
+        data-ocid="inactivity.dialog"
+      >
+        <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
+          <Bell className="w-7 h-7 text-amber-600" />
+        </div>
+        <h2 className="text-lg font-bold text-foreground mb-2">
+          Session Expiring Soon
+        </h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          You will be logged out due to inactivity in
+        </p>
+        <div
+          className="text-4xl font-mono font-bold text-amber-600 mb-5"
+          data-ocid="inactivity.countdown"
+        >
+          {timeStr}
+        </div>
+        <Button
+          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
+          onClick={onStayLoggedIn}
+          data-ocid="inactivity.confirm_button"
+        >
+          Stay Logged In
+        </Button>
+      </motion.div>
+    </div>
+  );
+}
+
 // ── App root ──────────────────────────────────────────────────────────────────
 
 interface DrugReminder {
@@ -1038,13 +1088,49 @@ interface DrugReminder {
 }
 
 function AppInner() {
-  const { currentDoctor, currentPatient, patientSignOut, isInitializing } =
-    useEmailAuth();
+  const {
+    currentDoctor,
+    currentPatient,
+    patientSignOut,
+    signOut,
+    isInitializing,
+  } = useEmailAuth();
   const {
     adminLogin,
     isAdmin: isAdminState,
     adminLogout: adminLogoutFn,
   } = useAdminAuth();
+
+  // Auto-logout on inactivity — active only when someone is logged in
+  const isLoggedIn = !!(currentDoctor || currentPatient);
+  const handleInactivityLogout = useCallback(() => {
+    if (currentDoctor) {
+      appendAuditLog({
+        timestamp: new Date().toISOString(),
+        userRole: currentDoctor.role,
+        userName: currentDoctor.name,
+        action: "Auto-logged out due to inactivity",
+        target: "System",
+      });
+      signOut();
+    } else if (currentPatient) {
+      appendAuditLog({
+        timestamp: new Date().toISOString(),
+        userRole: "patient",
+        userName: currentPatient.name,
+        action: "Auto-logged out due to inactivity",
+        target: "Patient Portal",
+      });
+      patientSignOut();
+    }
+    import("sonner").then(({ toast }) =>
+      toast.warning("You have been logged out due to inactivity."),
+    );
+  }, [currentDoctor, currentPatient, signOut, patientSignOut]);
+
+  const { showWarning, secondsRemaining, resetTimer } = useInactivityTimer(
+    isLoggedIn ? handleInactivityLogout : () => {},
+  );
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [showPendingPanel, setShowPendingPanel] = useState(false);
@@ -1686,6 +1772,12 @@ function AppInner() {
             </div>
           </DialogContent>
         </Dialog>
+        {showWarning && (
+          <InactivityWarningOverlay
+            secondsRemaining={secondsRemaining}
+            onStayLoggedIn={resetTimer}
+          />
+        )}
       </div>
     );
   }
@@ -1851,6 +1943,12 @@ function AppInner() {
     <>
       <RouterProvider router={router} />
       <Toaster position="top-right" richColors />
+      {showWarning && (
+        <InactivityWarningOverlay
+          secondsRemaining={secondsRemaining}
+          onStayLoggedIn={resetTimer}
+        />
+      )}
     </>
   );
 }

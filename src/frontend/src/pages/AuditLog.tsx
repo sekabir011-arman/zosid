@@ -1,4 +1,5 @@
 // Enhanced Audit Log — full before/after trail visible only to Admin + Consultant Doctor
+// Includes working CSV export, print-based PDF export, date/role/entity filters
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,8 +26,10 @@ import {
   Download,
   FileText,
   Lock,
+  Printer,
   Search,
   ShieldAlert,
+  X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useAdminAuth } from "../hooks/useAdminAuth";
@@ -64,6 +67,9 @@ const ENTITY_TYPES = [
   "Patient",
   "Visit",
   "Prescription",
+  "Appointment",
+  "Handover",
+  "User Account",
   "Observation",
   "ClinicalNote",
   "ClinicalOrder",
@@ -72,7 +78,150 @@ const ENTITY_TYPES = [
 
 const PAGE_SIZE = 50;
 
-// ── Legacy log row ────────────────────────────────────────────────────────────
+// ── CSV Export ────────────────────────────────────────────────────────────────
+
+function csvCell(v: string): string {
+  return `"${String(v ?? "").replace(/"/g, '""')}"`;
+}
+
+function generateCSV(
+  clinicalEntries: AuditEntry[],
+  legacyLogs: AuditLogEntry[],
+  fromDate: string,
+  toDate: string,
+): void {
+  const header =
+    "Timestamp,User,Role,Entity Type,Entity ID,Field / Action,Before Value,After Value,Reason / Target";
+
+  const clinicalRows = clinicalEntries.map((e) => {
+    const ts = new Date(Number(e.changedAt) / 1_000_000).toISOString();
+    return [
+      csvCell(ts),
+      csvCell(e.changedByName),
+      csvCell(e.changedByRole),
+      csvCell(e.entityType),
+      csvCell(String(e.entityId ?? "")),
+      csvCell(e.fieldName),
+      csvCell(e.beforeValue ?? ""),
+      csvCell(e.afterValue),
+      csvCell(e.reason ?? ""),
+    ].join(",");
+  });
+
+  const legacyRows = legacyLogs.map((l) => {
+    return [
+      csvCell(l.timestamp),
+      csvCell(l.userName),
+      csvCell(l.userRole),
+      csvCell("—"),
+      csvCell("—"),
+      csvCell(l.action),
+      csvCell("—"),
+      csvCell("—"),
+      csvCell(l.target),
+    ].join(",");
+  });
+
+  const csv = [header, ...clinicalRows, ...legacyRows].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const from = fromDate || format(new Date(), "yyyy-MM-dd");
+  const to = toDate || format(new Date(), "yyyy-MM-dd");
+  a.download = `audit-log-${from}-to-${to}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── PDF Export (print) ────────────────────────────────────────────────────────
+
+function printAuditLog(
+  clinicalEntries: AuditEntry[],
+  legacyLogs: AuditLogEntry[],
+  fromDate: string,
+  toDate: string,
+  totalOriginal: number,
+) {
+  const rows = [
+    ...clinicalEntries.map((e) => {
+      const ts = format(
+        new Date(Number(e.changedAt) / 1_000_000),
+        "MMM d, yyyy HH:mm",
+      );
+      return `<tr>
+        <td>${ts}</td>
+        <td>${e.changedByName}</td>
+        <td>${e.changedByRole}</td>
+        <td>${e.entityType}</td>
+        <td>${e.fieldName}</td>
+        <td class="before">${e.beforeValue ?? "—"}</td>
+        <td class="after">${e.afterValue}</td>
+        <td>${e.reason ?? "—"}</td>
+      </tr>`;
+    }),
+    ...legacyLogs.map((l) => {
+      const ts = format(new Date(l.timestamp), "MMM d, yyyy HH:mm");
+      return `<tr>
+        <td>${ts}</td>
+        <td>${l.userName}</td>
+        <td>${l.userRole}</td>
+        <td>—</td>
+        <td>${l.action}</td>
+        <td class="before">—</td>
+        <td class="after">—</td>
+        <td>${l.target}</td>
+      </tr>`;
+    }),
+  ].join("\n");
+
+  const from = fromDate || "All";
+  const to = toDate || "All";
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Audit Log ${from} to ${to}</title>
+<style>
+  body { font-family: Arial, sans-serif; font-size: 11px; margin: 20px; color: #111; }
+  h1 { font-size: 16px; margin-bottom: 4px; }
+  .meta { color: #555; font-size: 10px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #f3f4f6; text-align: left; padding: 6px 8px; font-size: 10px; border: 1px solid #d1d5db; }
+  td { padding: 5px 8px; border: 1px solid #e5e7eb; vertical-align: top; }
+  tr:nth-child(even) td { background: #f9fafb; }
+  .before { background: #fffbeb !important; color: #92400e; }
+  .after { background: #f0fdf4 !important; color: #166534; }
+</style>
+</head>
+<body>
+<h1>Dr. Arman Kabir's Care — Audit Trail</h1>
+<p class="meta">Period: ${from} to ${to} &nbsp;·&nbsp; Showing ${clinicalEntries.length + legacyLogs.length} of ${totalOriginal} entries &nbsp;·&nbsp; Generated: ${new Date().toLocaleString()}</p>
+<table>
+  <thead>
+    <tr>
+      <th>Timestamp</th><th>User</th><th>Role</th><th>Entity</th>
+      <th>Field / Action</th><th>Before</th><th>After</th><th>Reason / Target</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${rows}
+  </tbody>
+</table>
+</body>
+</html>`;
+
+  const win = window.open("", "_blank");
+  if (!win) return;
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => {
+    win.print();
+  }, 400);
+}
+
+// ── Log row components ────────────────────────────────────────────────────────
 
 function LegacyLogRow({ log, idx }: { log: AuditLogEntry; idx: number }) {
   return (
@@ -98,8 +247,6 @@ function LegacyLogRow({ log, idx }: { log: AuditLogEntry; idx: number }) {
     </TableRow>
   );
 }
-
-// ── Clinical audit row ────────────────────────────────────────────────────────
 
 function ClinicalAuditRow({ entry, idx }: { entry: AuditEntry; idx: number }) {
   const changedAt = new Date(Number(entry.changedAt) / 1_000_000);
@@ -164,16 +311,15 @@ export default function AuditLog() {
   const [roleFilter, setRoleFilter] = useState("All");
   const [page, setPage] = useState(1);
 
-  // Legacy logs
   const legacyLogs = useMemo(() => {
     const logs = getAuditLog();
     return [...logs].reverse();
   }, []);
 
-  // Clinical audit entries
   const clinicalEntries = useMemo(() => getClinicalAuditEntries(), []);
 
-  // All unique roles in logs
+  const totalUnfilteredEntries = legacyLogs.length + clinicalEntries.length;
+
   const allRoles = useMemo(() => {
     const roles = new Set<string>();
     for (const l of legacyLogs) roles.add(l.userRole);
@@ -184,7 +330,7 @@ export default function AuditLog() {
   const filteredLegacy = useMemo(() => {
     return legacyLogs.filter((log) => {
       if (roleFilter !== "All" && log.userRole !== roleFilter) return false;
-      if (entityFilter !== "All") return false; // legacy has no entity type
+      if (entityFilter !== "All") return false;
       if (search) {
         const q = search.toLowerCase();
         if (
@@ -228,7 +374,6 @@ export default function AuditLog() {
   const totalEntries = filteredLegacy.length + filteredClinical.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / PAGE_SIZE));
 
-  // Paginate: show clinical entries first (most detailed), then legacy
   const pagedClinical = filteredClinical.slice(
     (page - 1) * PAGE_SIZE,
     page * PAGE_SIZE,
@@ -243,26 +388,21 @@ export default function AuditLog() {
     legacyOffset + remainingSlots,
   );
 
-  const exportCSV = () => {
-    const header =
-      "Timestamp,User,Role,EntityType,Field,BeforeValue,AfterValue,Target/Reason";
-    const clinicalRows = filteredClinical.map((e) => {
-      const changedAt = new Date(Number(e.changedAt) / 1_000_000).toISOString();
-      return `"${changedAt}","${e.changedByName}","${e.changedByRole}","${e.entityType}","${e.fieldName}","${e.beforeValue ?? ""}","${e.afterValue}","${e.reason ?? ""}"`;
-    });
-    const legacyRows = filteredLegacy.map(
-      (l) =>
-        `"${l.timestamp}","${l.userName}","${l.userRole}","—","${l.action}","—","—","${l.target}"`,
-    );
-    const csv = [header, ...clinicalRows, ...legacyRows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `audit-trail-${format(new Date(), "yyyy-MM-dd")}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const hasActiveFilters =
+    search ||
+    fromDate ||
+    toDate ||
+    entityFilter !== "All" ||
+    roleFilter !== "All";
+
+  function resetFilters() {
+    setSearch("");
+    setFromDate("");
+    setToDate("");
+    setEntityFilter("All");
+    setRoleFilter("All");
+    setPage(1);
+  }
 
   // Access denied
   if (!canView) {
@@ -291,18 +431,62 @@ export default function AuditLog() {
       data-ocid="audit_log.page"
     >
       {/* Header */}
-      <div className="flex items-center gap-3 mb-2">
-        <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
-          <ShieldAlert className="w-5 h-5 text-amber-700" />
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
+            <ShieldAlert className="w-5 h-5 text-amber-700" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-foreground">
+              Full Audit Trail
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {hasActiveFilters ? (
+                <>
+                  Showing{" "}
+                  <strong className="text-foreground">{totalEntries}</strong> of{" "}
+                  {totalUnfilteredEntries} entries
+                </>
+              ) : (
+                <>
+                  {totalUnfilteredEntries} entries — before/after values tracked
+                  for medico-legal safety
+                </>
+              )}
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-xl font-bold text-foreground">
-            Full Audit Trail
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {totalEntries} entries — before/after values tracked for
-            medico-legal safety
-          </p>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              generateCSV(filteredClinical, filteredLegacy, fromDate, toDate)
+            }
+            className="gap-1.5 text-xs h-9"
+            data-ocid="audit_log.export_csv.button"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Export CSV
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              printAuditLog(
+                filteredClinical,
+                filteredLegacy,
+                fromDate,
+                toDate,
+                totalUnfilteredEntries,
+              )
+            }
+            className="gap-1.5 text-xs h-9"
+            data-ocid="audit_log.export_pdf.button"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            Export PDF
+          </Button>
         </div>
       </div>
 
@@ -319,124 +503,141 @@ export default function AuditLog() {
       </div>
 
       {/* Filters */}
-      <div className="bg-card border border-border rounded-xl p-4 flex flex-wrap gap-3 items-end">
-        <div className="flex-1 min-w-48 space-y-1">
-          <label
-            htmlFor="audit-search"
-            className="text-xs font-medium text-muted-foreground"
-          >
-            Search
-          </label>
-          <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-muted-foreground" />
-            <Input
-              id="audit-search"
-              placeholder="User, action, field..."
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+        <div className="flex flex-wrap gap-3 items-end">
+          <div className="flex-1 min-w-48 space-y-1">
+            <label
+              htmlFor="audit-search"
+              className="text-xs font-medium text-muted-foreground"
+            >
+              Search
+            </label>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-muted-foreground" />
+              <Input
+                id="audit-search"
+                placeholder="User, action, field..."
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+                className="pl-9"
+                data-ocid="audit_log.search_input"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-muted-foreground">
+              Entity Type
+            </p>
+            <Select
+              value={entityFilter}
+              onValueChange={(v) => {
+                setEntityFilter(v);
                 setPage(1);
               }}
-              className="pl-9"
-              data-ocid="audit_log.search_input"
+            >
+              <SelectTrigger
+                className="w-40 h-9 text-sm"
+                data-ocid="audit_log.entity_filter"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ENTITY_TYPES.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {t}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-muted-foreground">Role</p>
+            <Select
+              value={roleFilter}
+              onValueChange={(v) => {
+                setRoleFilter(v);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger
+                className="w-40 h-9 text-sm"
+                data-ocid="audit_log.role_filter"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {allRoles.map((r) => (
+                  <SelectItem key={r} value={r} className="capitalize">
+                    {r}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="audit-from"
+              className="text-xs font-medium text-muted-foreground"
+            >
+              From Date
+            </label>
+            <Input
+              id="audit-from"
+              type="date"
+              value={fromDate}
+              onChange={(e) => {
+                setFromDate(e.target.value);
+                setPage(1);
+              }}
+              className="w-36 h-9 text-sm"
+              data-ocid="audit_log.from_date_input"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="audit-to"
+              className="text-xs font-medium text-muted-foreground"
+            >
+              To Date
+            </label>
+            <Input
+              id="audit-to"
+              type="date"
+              value={toDate}
+              onChange={(e) => {
+                setToDate(e.target.value);
+                setPage(1);
+              }}
+              className="w-36 h-9 text-sm"
+              data-ocid="audit_log.to_date_input"
             />
           </div>
         </div>
-        <div className="space-y-1">
-          <p className="text-xs font-medium text-muted-foreground">
-            Entity Type
-          </p>
-          <Select
-            value={entityFilter}
-            onValueChange={(v) => {
-              setEntityFilter(v);
-              setPage(1);
-            }}
-          >
-            <SelectTrigger
-              className="w-40 h-9 text-sm"
-              data-ocid="audit_log.entity_filter"
+
+        {hasActiveFilters && (
+          <div className="flex items-center gap-2 pt-1">
+            <span className="text-xs text-muted-foreground">
+              {totalEntries} result{totalEntries !== 1 ? "s" : ""} matching
+              current filters
+            </span>
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="text-xs text-primary underline flex items-center gap-1 hover:opacity-80"
+              data-ocid="audit_log.reset_filters"
             >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {ENTITY_TYPES.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <p className="text-xs font-medium text-muted-foreground">Role</p>
-          <Select
-            value={roleFilter}
-            onValueChange={(v) => {
-              setRoleFilter(v);
-              setPage(1);
-            }}
-          >
-            <SelectTrigger
-              className="w-40 h-9 text-sm"
-              data-ocid="audit_log.role_filter"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {allRoles.map((r) => (
-                <SelectItem key={r} value={r} className="capitalize">
-                  {r}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <label
-            htmlFor="audit-from"
-            className="text-xs font-medium text-muted-foreground"
-          >
-            From
-          </label>
-          <Input
-            id="audit-from"
-            type="date"
-            value={fromDate}
-            onChange={(e) => {
-              setFromDate(e.target.value);
-              setPage(1);
-            }}
-            className="w-36 h-9 text-sm"
-          />
-        </div>
-        <div className="space-y-1">
-          <label
-            htmlFor="audit-to"
-            className="text-xs font-medium text-muted-foreground"
-          >
-            To
-          </label>
-          <Input
-            id="audit-to"
-            type="date"
-            value={toDate}
-            onChange={(e) => {
-              setToDate(e.target.value);
-              setPage(1);
-            }}
-            className="w-36 h-9 text-sm"
-          />
-        </div>
-        <Button
-          variant="outline"
-          onClick={exportCSV}
-          className="gap-2"
-          data-ocid="audit_log.export.button"
-        >
-          <Download className="w-4 h-4" />
-          Export CSV
-        </Button>
+              <X className="w-3 h-3" />
+              Reset filters
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -448,6 +649,15 @@ export default function AuditLog() {
           <div className="text-center py-16" data-ocid="audit_log.empty_state">
             <FileText className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
             <p className="text-muted-foreground">No audit entries found</p>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="mt-2 text-sm text-primary underline"
+              >
+                Clear filters
+              </button>
+            )}
           </div>
         ) : (
           <ScrollArea className="h-[58vh]">
@@ -516,7 +726,7 @@ export default function AuditLog() {
               size="sm"
               disabled={page === 1}
               onClick={() => setPage((p) => p - 1)}
-              data-ocid="audit_log.prev_page.button"
+              data-ocid="audit_log.pagination_prev"
             >
               Previous
             </Button>
@@ -525,7 +735,7 @@ export default function AuditLog() {
               size="sm"
               disabled={page === totalPages}
               onClick={() => setPage((p) => p + 1)}
-              data-ocid="audit_log.next_page.button"
+              data-ocid="audit_log.pagination_next"
             >
               Next
             </Button>

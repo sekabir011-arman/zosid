@@ -41,6 +41,16 @@ export interface SyncStatus {
   lastSyncAt?: Date;
 }
 
+export interface SyncConflict {
+  entityType: string;
+  entityId: string;
+  localVersion: unknown;
+  serverVersion: unknown;
+  localUpdatedAt?: number;
+  serverUpdatedAt?: number;
+  detectedAt: number;
+}
+
 export interface MigrationProgress {
   total: number;
   migrated: number;
@@ -55,6 +65,7 @@ const LAST_SYNC_KEY = "medicare_last_sync_at";
 const LAST_SYNC_TS_KEY = "medicare_last_sync_ts";
 const MIGRATION_DONE_KEY = "medicare_migration_v1_done";
 const DEVICE_ID_KEY = "medicare_device_id";
+const CONFLICTS_KEY = "medicare_sync_conflicts";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -106,6 +117,96 @@ export function isMigrationDone(): boolean {
 
 export function markMigrationDone(): void {
   localStorage.setItem(MIGRATION_DONE_KEY, "true");
+}
+
+// ─── Conflict detection ───────────────────────────────────────────────────────
+
+export function getConflicts(): SyncConflict[] {
+  try {
+    const raw = localStorage.getItem(CONFLICTS_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as SyncConflict[];
+  } catch {
+    return [];
+  }
+}
+
+function saveConflicts(conflicts: SyncConflict[]): void {
+  try {
+    localStorage.setItem(CONFLICTS_KEY, JSON.stringify(conflicts));
+  } catch {}
+}
+
+/** Record a detected conflict — deduplicates by entityId */
+export function addConflict(conflict: SyncConflict): void {
+  const existing = getConflicts();
+  const deduped = existing.filter((c) => c.entityId !== conflict.entityId);
+  deduped.push(conflict);
+  saveConflicts(deduped);
+}
+
+export function getConflictsCount(): number {
+  return getConflicts().length;
+}
+
+/**
+ * Resolve a conflict for the given entityId.
+ * 'mine' → keep local version (do nothing, local is already in localStorage).
+ * 'theirs' → overwrite local version with server version.
+ */
+export function resolveConflict(
+  entityId: string,
+  choice: "mine" | "theirs",
+): void {
+  const conflicts = getConflicts();
+  const conflict = conflicts.find((c) => c.entityId === entityId);
+  if (!conflict) return;
+
+  if (choice === "theirs") {
+    // Overwrite the local record with the server version
+    try {
+      const entityType = conflict.entityType;
+      const serverData = conflict.serverVersion as Record<string, unknown>;
+
+      if (entityType === "patient") {
+        const key = storageKey("patients");
+        const local = loadFromStorage<{ id: unknown }>(key);
+        const updated = local.map((item) =>
+          String(item.id) === entityId ? (serverData as typeof item) : item,
+        );
+        if (!updated.find((item) => String(item.id) === entityId)) {
+          updated.push(serverData as { id: unknown });
+        }
+        saveToStorage(key, updated);
+      } else if (entityType === "visit") {
+        const key = storageKey("visits");
+        const local = loadFromStorage<{ id: unknown }>(key);
+        const updated = local.map((item) =>
+          String(item.id) === entityId ? (serverData as typeof item) : item,
+        );
+        saveToStorage(key, updated);
+      } else if (entityType === "prescription") {
+        const key = storageKey("prescriptions");
+        const local = loadFromStorage<{ id: unknown }>(key);
+        const updated = local.map((item) =>
+          String(item.id) === entityId ? (serverData as typeof item) : item,
+        );
+        saveToStorage(key, updated);
+      } else if (entityType === "appointment") {
+        const local = loadFromStorage<{ id: unknown }>("clinic_appointments");
+        const updated = local.map((item) =>
+          String(item.id) === entityId ? (serverData as typeof item) : item,
+        );
+        saveToStorage("clinic_appointments", updated);
+      }
+    } catch (e) {
+      console.warn("[conflict] resolveConflict 'theirs' failed:", e);
+    }
+  }
+  // For 'mine', local is already correct — just remove the conflict
+
+  const remaining = conflicts.filter((c) => c.entityId !== entityId);
+  saveConflicts(remaining);
 }
 
 // ─── Network probe ────────────────────────────────────────────────────────────
@@ -183,10 +284,11 @@ export function getSyncStatus(): SyncStatus {
  * Merge two arrays by id. If both have a record with the same id,
  * the one with the higher `updatedAt` wins (last-writer-wins).
  * Falls back to preferring remote if no updatedAt is present.
+ * When a conflict is detected (both sides have changes), it is recorded.
  */
 function mergeByIdLastWriterWins<
   T extends { id: unknown; updatedAt?: unknown },
->(local: T[], remote: T[]): T[] {
+>(local: T[], remote: T[], entityType?: string): T[] {
   const resultMap = new Map<string, T>();
 
   // Seed with local
@@ -194,7 +296,7 @@ function mergeByIdLastWriterWins<
     resultMap.set(String(item.id), item);
   }
 
-  // Merge remote — last-writer-wins on updatedAt
+  // Merge remote — last-writer-wins on updatedAt, conflict detection
   for (const remoteItem of remote) {
     const key = String(remoteItem.id);
     const localItem = resultMap.get(key);
@@ -204,10 +306,24 @@ function mergeByIdLastWriterWins<
       // Compare updatedAt — higher wins
       const remoteTs = BigInt(String(remoteItem.updatedAt ?? 0));
       const localTs = BigInt(String(localItem.updatedAt ?? 0));
-      if (remoteTs >= localTs) {
+      if (remoteTs > localTs) {
+        // Server is newer — but local also has changes: conflict if both are non-zero
+        if (localTs > 0n && entityType) {
+          addConflict({
+            entityType,
+            entityId: key,
+            localVersion: localItem,
+            serverVersion: remoteItem,
+            localUpdatedAt:
+              localTs > 0n ? Number(localTs / 1_000_000n) : undefined,
+            serverUpdatedAt:
+              remoteTs > 0n ? Number(remoteTs / 1_000_000n) : undefined,
+            detectedAt: Date.now(),
+          });
+        }
         resultMap.set(key, remoteItem);
       }
-      // else keep local (it's newer)
+      // else keep local (it's newer or equal)
     }
   }
 
@@ -262,6 +378,7 @@ export async function bootstrapFromCanister(
       const merged = mergeByIdLastWriterWins(
         local,
         remotePatients as typeof local,
+        "patient",
       );
       saveToStorage(key, merged);
       recordsLoaded += remotePatients.length;
@@ -274,6 +391,7 @@ export async function bootstrapFromCanister(
       const merged = mergeByIdLastWriterWins(
         local,
         remoteVisits as typeof local,
+        "visit",
       );
       saveToStorage(key, merged);
       recordsLoaded += remoteVisits.length;
@@ -286,6 +404,7 @@ export async function bootstrapFromCanister(
       const merged = mergeByIdLastWriterWins(
         local,
         remotePrescriptions as typeof local,
+        "prescription",
       );
       saveToStorage(key, merged);
       recordsLoaded += remotePrescriptions.length;
@@ -309,6 +428,7 @@ export async function bootstrapFromCanister(
         const merged = mergeByIdLastWriterWins(
           local,
           syncData.appointments as typeof local,
+          "appointment",
         );
         saveToStorage("clinic_appointments", merged);
         recordsLoaded += syncData.appointments.length;
@@ -394,6 +514,7 @@ export async function pollAndUpdateFromCanister(
       const merged = mergeByIdLastWriterWins(
         local,
         remotePatients as typeof local,
+        "patient",
       );
       saveToStorage(key, merged);
       updated += Math.abs(merged.length - before) + remotePatients.length;
@@ -406,6 +527,7 @@ export async function pollAndUpdateFromCanister(
       const merged = mergeByIdLastWriterWins(
         local,
         remoteVisits as typeof local,
+        "visit",
       );
       saveToStorage(key, merged);
       updated += remoteVisits.length;
@@ -418,6 +540,7 @@ export async function pollAndUpdateFromCanister(
       const merged = mergeByIdLastWriterWins(
         local,
         remotePrescriptions as typeof local,
+        "prescription",
       );
       saveToStorage(key, merged);
       updated += remotePrescriptions.length;
@@ -440,6 +563,7 @@ export async function pollAndUpdateFromCanister(
       const merged = mergeByIdLastWriterWins(
         local,
         remoteAppts as typeof local,
+        "appointment",
       );
       saveToStorage("clinic_appointments", merged);
       updated += remoteAppts.length;

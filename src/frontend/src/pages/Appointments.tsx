@@ -69,6 +69,15 @@ type SerialStatus = "waiting" | "in-progress" | "done";
 type AppointmentStatus = "scheduled" | "confirmed" | "cancelled";
 type AppointmentType = "chamber" | "admitted";
 
+/** Slot availability result for the conflict check */
+type SlotAvailability = "available" | "conflict" | "unknown";
+
+interface ConflictInfo {
+  conflictingTime: string;
+  conflictingPatient: string;
+  doctorName: string;
+}
+
 interface SerialEntry {
   id: string;
   serial: number;
@@ -260,6 +269,44 @@ function uid() {
 function nowTime() {
   const d = new Date();
   return d.toTimeString().slice(0, 5);
+}
+
+// ─── Conflict check ──────────────────────────────────────────────────────────
+
+/**
+ * Check if a doctor already has an appointment within 15 minutes of the
+ * requested date+time combination. Returns null if no conflict.
+ */
+function checkSlotConflict(
+  appointments: AppointmentEntry[],
+  date: string,
+  time: string,
+  doctor: string,
+  excludeId?: string,
+): ConflictInfo | null {
+  if (!date || !time || !doctor) return null;
+  const [hh, mm] = time.split(":").map(Number);
+  const requestedMinutes = hh * 60 + mm;
+
+  for (const appt of appointments) {
+    if (appt.id === excludeId) continue;
+    if (appt.appointmentType !== "chamber") continue;
+    if (appt.status === "cancelled") continue;
+    if (appt.date !== date) continue;
+    if (appt.doctor !== doctor) continue;
+    if (!appt.time) continue;
+
+    const [ah, am] = appt.time.split(":").map(Number);
+    const apptMinutes = ah * 60 + am;
+    if (Math.abs(apptMinutes - requestedMinutes) < 15) {
+      return {
+        conflictingTime: appt.time,
+        conflictingPatient: appt.patientName,
+        doctorName: doctor,
+      };
+    }
+  }
+  return null;
 }
 
 // ─── Patient register number lookup ─────────────────────────────────────────
@@ -843,6 +890,12 @@ function ChamberAppointmentsTab() {
   const [receiptTarget, setReceiptTarget] = useState<AppointmentEntry | null>(
     null,
   );
+  // Conflict check state
+  const [slotAvailability, setSlotAvailability] =
+    useState<SlotAvailability>("unknown");
+  const [conflictInfo, setConflictInfo] = useState<ConflictInfo | null>(null);
+  const [showConflictWarning, setShowConflictWarning] = useState(false);
+  const [pendingSave, setPendingSave] = useState(false);
 
   const emptyForm = {
     name: "",
@@ -888,6 +941,8 @@ function ChamberAppointmentsTab() {
     setLookupQuery("");
     setLookupMsg("");
     setEditTarget(null);
+    setSlotAvailability("unknown");
+    setConflictInfo(null);
     setAddOpen(true);
   }
 
@@ -906,7 +961,36 @@ function ChamberAppointmentsTab() {
     setLookupQuery(appt.registerNumber || "");
     setLookupMsg("");
     setEditTarget(appt);
+    setSlotAvailability("unknown");
+    setConflictInfo(null);
     setAddOpen(true);
+  }
+
+  /** Run slot conflict check whenever date, time, or doctor changes */
+  function checkAndSetSlotAvailability(
+    date: string,
+    time: string,
+    doctor: string,
+  ) {
+    if (!date || !time || !doctor) {
+      setSlotAvailability("unknown");
+      setConflictInfo(null);
+      return;
+    }
+    const conflict = checkSlotConflict(
+      appointments,
+      date,
+      time,
+      doctor,
+      editTarget?.id,
+    );
+    if (conflict) {
+      setSlotAvailability("conflict");
+      setConflictInfo(conflict);
+    } else {
+      setSlotAvailability("available");
+      setConflictInfo(null);
+    }
   }
 
   function saveAppointment() {
@@ -918,7 +1002,16 @@ function ChamberAppointmentsTab() {
       toast.error("Please select a date");
       return;
     }
+    // If there's a conflict and user hasn't acknowledged it yet, show warning
+    if (slotAvailability === "conflict" && conflictInfo && !pendingSave) {
+      setShowConflictWarning(true);
+      return;
+    }
+    _doSave();
+    setPendingSave(false);
+  }
 
+  function _doSave() {
     const currentAll = loadAppointments();
     const serial = getOrAssignSerial(currentAll, form.name.trim(), form.date);
 
@@ -1205,6 +1298,63 @@ function ChamberAppointmentsTab() {
         />
       )}
 
+      {/* Conflict Warning Dialog */}
+      <Dialog
+        open={showConflictWarning}
+        onOpenChange={(o) => {
+          if (!o) setShowConflictWarning(false);
+        }}
+      >
+        <DialogContent
+          className="sm:max-w-sm"
+          data-ocid="chamber_appt.conflict_dialog"
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              <AlertCircle className="w-5 h-5" />
+              Appointment Conflict
+            </DialogTitle>
+          </DialogHeader>
+          {conflictInfo && (
+            <p className="text-sm text-muted-foreground">
+              <span className="font-semibold text-foreground">
+                {conflictInfo.doctorName}
+              </span>{" "}
+              already has an appointment at{" "}
+              <span className="font-semibold text-amber-700">
+                {conflictInfo.conflictingTime}
+              </span>{" "}
+              for{" "}
+              <span className="font-semibold text-foreground">
+                {conflictInfo.conflictingPatient}
+              </span>
+              . This is within 15 minutes of your selected time.
+            </p>
+          )}
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowConflictWarning(false)}
+              data-ocid="chamber_appt.conflict_choose_time_button"
+            >
+              Choose Different Time
+            </Button>
+            <Button
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              onClick={() => {
+                setShowConflictWarning(false);
+                setPendingSave(true);
+                // Directly do the save since we already confirmed
+                _doSave();
+              }}
+              data-ocid="chamber_appt.conflict_book_anyway_button"
+            >
+              Book Anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Add/Edit Dialog */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-lg" data-ocid="chamber_appt.dialog">
@@ -1264,31 +1414,79 @@ function ChamberAppointmentsTab() {
                 <Input
                   type="date"
                   value={form.date}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, date: e.target.value }))
-                  }
+                  onChange={(e) => {
+                    const newDate = e.target.value;
+                    setForm((f) => ({ ...f, date: newDate }));
+                    checkAndSetSlotAvailability(
+                      newDate,
+                      form.time,
+                      form.doctor,
+                    );
+                  }}
                   data-ocid="chamber_appt.input"
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Preferred Time</Label>
+                <Label className="flex items-center gap-2">
+                  Preferred Time
+                  {/* Slot availability indicator */}
+                  {form.time && form.doctor && (
+                    <span
+                      className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${
+                        slotAvailability === "available"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : slotAvailability === "conflict"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {slotAvailability === "available"
+                        ? "🟢 Available"
+                        : slotAvailability === "conflict"
+                          ? "🟡 Conflict"
+                          : ""}
+                    </span>
+                  )}
+                </Label>
                 <Input
                   type="time"
                   value={form.time}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, time: e.target.value }))
+                  onChange={(e) => {
+                    const newTime = e.target.value;
+                    setForm((f) => ({ ...f, time: newTime }));
+                    checkAndSetSlotAvailability(
+                      form.date,
+                      newTime,
+                      form.doctor,
+                    );
+                  }}
+                  onBlur={() =>
+                    checkAndSetSlotAvailability(
+                      form.date,
+                      form.time,
+                      form.doctor,
+                    )
                   }
                   data-ocid="chamber_appt.input"
                 />
+                {slotAvailability === "conflict" && conflictInfo && (
+                  <p className="text-xs text-amber-600 font-medium flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    {conflictInfo.doctorName} already has an appointment at{" "}
+                    {conflictInfo.conflictingTime} for{" "}
+                    {conflictInfo.conflictingPatient}
+                  </p>
+                )}
               </div>
             </div>
             <div className="space-y-1.5">
               <Label>Doctor</Label>
               <Select
                 value={form.doctor}
-                onValueChange={(v) =>
-                  setForm((f) => ({ ...f, doctor: v, chamber: "" }))
-                }
+                onValueChange={(v) => {
+                  setForm((f) => ({ ...f, doctor: v, chamber: "" }));
+                  checkAndSetSlotAvailability(form.date, form.time, v);
+                }}
               >
                 <SelectTrigger data-ocid="chamber_appt.select">
                   <SelectValue placeholder="Select doctor (optional)" />

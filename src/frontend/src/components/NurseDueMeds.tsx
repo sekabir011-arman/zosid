@@ -2,15 +2,14 @@
  * NurseDueMeds — "Due Meds Now" dashboard card for Nurse and Intern Doctor roles.
  * Shows all admitted patients' medications due within the current hour.
  * Nurse/intern can mark each drug as Given / Not Given / Delayed.
- * Reads from BOTH localStorage reminder formats:
- *  - "medicare_drug_reminders" (App.tsx format: {times, enabled})
- *  - "drugReminders_[patientId]" (useQueries.ts format: {reminderTimes, status, frequency})
+ * When a drug is "Not Given" 2+ consecutive times → escalation to Consultant.
  */
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Clock, Pill, RefreshCw, XCircle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 
 export interface MedAdminRecord {
   id: string;
@@ -27,6 +26,17 @@ export interface MedAdminRecord {
   date: string; // YYYY-MM-DD
 }
 
+export interface MissedDoseEscalation {
+  type: "missed_dose_escalation";
+  patientId: string;
+  patientName: string;
+  drugName: string;
+  missedCount: number;
+  timestamp: string;
+  consultantEmail: string;
+  acknowledged: boolean;
+}
+
 interface DueMedRow {
   patientId: string;
   patientName: string;
@@ -36,6 +46,43 @@ interface DueMedRow {
   scheduledTime: string;
   reminderId: string;
   existingRecord?: MedAdminRecord;
+}
+
+export const ESCALATION_KEY = "missed_dose_escalations";
+
+export function loadEscalations(): MissedDoseEscalation[] {
+  try {
+    const raw = localStorage.getItem(ESCALATION_KEY);
+    if (raw) return JSON.parse(raw) as MissedDoseEscalation[];
+  } catch {}
+  return [];
+}
+
+export function saveEscalation(esc: MissedDoseEscalation) {
+  const all = loadEscalations();
+  const idx = all.findIndex(
+    (e) => e.patientId === esc.patientId && e.drugName === esc.drugName,
+  );
+  if (idx >= 0) {
+    all[idx] = esc;
+  } else {
+    all.push(esc);
+  }
+  localStorage.setItem(ESCALATION_KEY, JSON.stringify(all));
+}
+
+export function acknowledgeEscalation(
+  patientId: string,
+  drugName: string,
+): void {
+  const all = loadEscalations();
+  const idx = all.findIndex(
+    (e) => e.patientId === patientId && e.drugName === drugName,
+  );
+  if (idx >= 0) {
+    all[idx].acknowledged = true;
+    localStorage.setItem(ESCALATION_KEY, JSON.stringify(all));
+  }
 }
 
 export function getMedAdminKey(patientId: string, date: string) {
@@ -67,6 +114,60 @@ export function saveMedAdminRecord(record: MedAdminRecord) {
     existing.push(record);
   }
   localStorage.setItem(key, JSON.stringify(existing));
+}
+
+/** Count consecutive "not_given" entries across all dates for a drug/patient */
+function countConsecutiveNotGiven(patientId: string, drugName: string): number {
+  const allRecords: MedAdminRecord[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k?.startsWith(`medAdminRecord_${patientId}_`)) continue;
+    try {
+      const arr = JSON.parse(
+        localStorage.getItem(k) || "[]",
+      ) as MedAdminRecord[];
+      allRecords.push(...arr.filter((r) => r.drugName === drugName));
+    } catch {}
+  }
+  // Sort by date + scheduledTime ascending
+  allRecords.sort((a, b) => {
+    const da = `${a.date} ${a.scheduledTime}`;
+    const db = `${b.date} ${b.scheduledTime}`;
+    return da.localeCompare(db);
+  });
+  // Count consecutive not_given from the end
+  let count = 0;
+  for (let i = allRecords.length - 1; i >= 0; i--) {
+    if (allRecords[i].status === "not_given") {
+      count++;
+    } else {
+      break;
+    }
+  }
+  return count;
+}
+
+/** Play an audible alarm tone */
+function playAlarm() {
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
+    const ctx = new AudioCtx();
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    oscillator.type = "square";
+    oscillator.frequency.setValueAtTime(880, ctx.currentTime);
+    oscillator.frequency.setValueAtTime(660, ctx.currentTime + 0.2);
+    oscillator.frequency.setValueAtTime(880, ctx.currentTime + 0.4);
+    gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+    oscillator.start(ctx.currentTime);
+    oscillator.stop(ctx.currentTime + 0.8);
+  } catch {}
 }
 
 /** Parse frequency string like "1+1+1", "1+0+1", "0+0+1", "1+0+0" into times */
@@ -198,6 +299,15 @@ function loadAllReminders(): ReminderRecord[] {
   return all;
 }
 
+/** Resolve the assigned consultant's email for a patient */
+function getConsultantEmail(patientId: string): string {
+  try {
+    const key = `patient_consultant_${patientId}`;
+    return localStorage.getItem(key) ?? "consultant@clinic";
+  } catch {}
+  return "consultant@clinic";
+}
+
 interface NurseDueMedsProps {
   currentUserName: string;
   currentUserRole: string;
@@ -233,7 +343,6 @@ export default function NurseDueMeds({
       if (!isEnabled) continue;
       if (!admittedIds.has(reminder.patientId)) continue;
 
-      // Normalize times from either field or derive from frequency
       let times: string[] = [];
       if (reminder.times?.length) {
         times = reminder.times;
@@ -305,6 +414,34 @@ export default function NurseDueMeds({
       date: today,
     };
     saveMedAdminRecord(record);
+
+    // Escalation check: if "not_given", count consecutive misses after saving
+    if (status === "not_given") {
+      const consecutive = countConsecutiveNotGiven(row.patientId, row.drugName);
+      if (consecutive >= 2) {
+        const consultantEmail = getConsultantEmail(row.patientId);
+        const esc: MissedDoseEscalation = {
+          type: "missed_dose_escalation",
+          patientId: row.patientId,
+          patientName: row.patientName,
+          drugName: row.drugName,
+          missedCount: consecutive,
+          timestamp: new Date().toISOString(),
+          consultantEmail,
+          acknowledged: false,
+        };
+        saveEscalation(esc);
+        playAlarm();
+        toast.error(
+          `⚠️ ESCALATION: ${row.drugName} missed ${consecutive}× for ${row.patientName} — Consultant notified`,
+          {
+            duration: 8000,
+            id: `esc-${row.patientId}-${row.drugName}`,
+          },
+        );
+      }
+    }
+
     loadDueMeds();
   }
 

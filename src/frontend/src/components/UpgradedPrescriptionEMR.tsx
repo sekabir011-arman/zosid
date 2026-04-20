@@ -27,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Building2,
   Calculator,
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronUp,
@@ -48,6 +49,7 @@ import {
 } from "lucide-react";
 import { Component, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { toast } from "sonner";
 import { useEmailAuth } from "../hooks/useEmailAuth";
 import {
   autoPopulateDrugReminders,
@@ -693,6 +695,7 @@ function UpgradedPrescriptionEMRInner(props: UpgradedPrescriptionEMRProps) {
 
   // Advice
   const [adviceText, setAdviceText] = useState("");
+  const [followUpDate, setFollowUpDate] = useState("");
   const [adviceQuery, setAdviceQuery] = useState("");
   const [adviceCategory, setAdviceCategory] = useState("সব");
   const [allTemplates, setAllTemplates] = useState<AdviceTemplate[]>([]);
@@ -795,6 +798,7 @@ function UpgradedPrescriptionEMRInner(props: UpgradedPrescriptionEMRProps) {
               if (mergedInv) setInvestigation(mergedInv);
               if (d.adviceNewInv) setAdviceNewInv(d.adviceNewInv);
               if (d.adviceText) setAdviceText(d.adviceText);
+              if (d.followUpDate) setFollowUpDate(d.followUpDate);
               if (d.diagnoses) setDiagnoses(d.diagnoses);
               else if (d.diagnosis) setDiagnoses([d.diagnosis]);
               if (d.diagnosis) setDiagnosis(d.diagnosis);
@@ -831,6 +835,7 @@ function UpgradedPrescriptionEMRInner(props: UpgradedPrescriptionEMRProps) {
           investigation,
           adviceNewInv,
           adviceText,
+          followUpDate,
           diagnoses,
           diagnosis,
           rxDrugs,
@@ -846,6 +851,7 @@ function UpgradedPrescriptionEMRInner(props: UpgradedPrescriptionEMRProps) {
     investigation,
     adviceNewInv,
     adviceText,
+    followUpDate,
     diagnoses,
     diagnosis,
     rxDrugs,
@@ -1243,6 +1249,55 @@ function UpgradedPrescriptionEMRInner(props: UpgradedPrescriptionEMRProps) {
     // Auto-populate drug reminders (only for active prescriptions)
     if (status === "active") {
       autoPopulateDrugReminders(patientId, medications, snapId);
+    }
+
+    // Auto-create follow-up appointment if follow-up date is set
+    if (status === "active" && followUpDate) {
+      try {
+        const apptKey = "medicare_appointments";
+        const existingAppts = (() => {
+          try {
+            return JSON.parse(localStorage.getItem(apptKey) ?? "[]") as Record<
+              string,
+              unknown
+            >[];
+          } catch {
+            return [] as Record<string, unknown>[];
+          }
+        })();
+        const appt: Record<string, unknown> = {
+          id: `fu_${Date.now().toString(36)}`,
+          patientId: patientId.toString(),
+          patientName: name || "Patient",
+          phone: "",
+          registerNumber: regNo || undefined,
+          preferredDoctor: currentDoctor?.name ?? getDoctorEmail(),
+          preferredChamber: undefined,
+          preferredDate: followUpDate,
+          preferredTime: "10:00",
+          reason: "Prescription follow-up",
+          status: "confirmed",
+          createdAt: new Date().toISOString(),
+          createdBy: currentDoctor?.name ?? getDoctorEmail(),
+          notes: "Auto-created from prescription follow-up date",
+          appointmentType: "chamber",
+        };
+        localStorage.setItem(apptKey, JSON.stringify([appt, ...existingAppts]));
+        const formattedDate = new Date(followUpDate).toLocaleDateString(
+          "en-GB",
+          {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          },
+        );
+        toast.success(`Follow-up appointment created for ${formattedDate}`, {
+          description: "Added to appointments list",
+          style: { backgroundColor: "#f0fdf4", color: "#166534" },
+        });
+      } catch {
+        /* ignore appointment creation errors */
+      }
     }
   }
 
@@ -2454,6 +2509,56 @@ function UpgradedPrescriptionEMRInner(props: UpgradedPrescriptionEMRProps) {
               )}
             </div>
 
+            {/* FOLLOW-UP DATE */}
+            <div
+              className={`rounded-lg p-3 ${dark ? "bg-gray-900" : "bg-white"} shadow-sm`}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <CalendarDays className="w-4 h-4 text-emerald-600" />
+                <span className="text-sm font-semibold text-emerald-700 uppercase tracking-wide">
+                  Follow-up Date
+                </span>
+                {followUpDate && (
+                  <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300 font-medium">
+                    Appointment will be auto-created
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="date"
+                  value={followUpDate}
+                  min={new Date().toISOString().slice(0, 10)}
+                  onChange={(e) => setFollowUpDate(e.target.value)}
+                  className={`border rounded px-3 py-1.5 text-sm ${dark ? "bg-gray-800 border-gray-600 text-white" : "bg-white border-emerald-300 text-gray-800"}`}
+                  data-ocid="rx.followup_date.input"
+                />
+                {followUpDate && (
+                  <button
+                    type="button"
+                    onClick={() => setFollowUpDate("")}
+                    className="text-xs text-red-400 hover:text-red-600 underline"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              {followUpDate && (
+                <p className="text-xs text-emerald-600 mt-1.5">
+                  📅 Follow-up on{" "}
+                  <span className="font-semibold">
+                    {new Date(followUpDate).toLocaleDateString("en-GB", {
+                      weekday: "long",
+                      day: "2-digit",
+                      month: "long",
+                      year: "numeric",
+                    })}
+                  </span>{" "}
+                  — appointment will be auto-created when prescription is saved.
+                </p>
+              )}
+            </div>
+
             {/* ADVICE */}
             <div
               className={`rounded-lg p-3 ${
@@ -2709,6 +2814,7 @@ function UpgradedPrescriptionEMRInner(props: UpgradedPrescriptionEMRProps) {
                   historyOthers={historyOthers}
                   investigation={investigation}
                   adviceNewInv={adviceNewInv}
+                  followUpDate={followUpDate}
                 />
               )}
             </div>
@@ -3697,6 +3803,7 @@ function PrescriptionPreview({
   historyOthers,
   investigation,
   adviceNewInv,
+  followUpDate,
 }: {
   withHeader: boolean;
   headerType: PrescriptionHeaderType;
@@ -3724,6 +3831,7 @@ function PrescriptionPreview({
   historyOthers: string;
   investigation: string;
   adviceNewInv: string;
+  followUpDate?: string;
 }) {
   const printId = "rx-preview-print";
 
@@ -4092,6 +4200,22 @@ function PrescriptionPreview({
                 </div>
                 <div className="text-xs whitespace-pre-wrap">
                   {numberedAdvice}
+                </div>
+              </div>
+            )}
+            {followUpDate && (
+              <div className="mt-3 pt-2 border-t">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700">
+                  <CalendarDays className="w-3.5 h-3.5" />
+                  Follow-up Date:{" "}
+                  <span className="font-semibold">
+                    {new Date(followUpDate).toLocaleDateString("en-GB", {
+                      weekday: "long",
+                      day: "2-digit",
+                      month: "long",
+                      year: "numeric",
+                    })}
+                  </span>
                 </div>
               </div>
             )}

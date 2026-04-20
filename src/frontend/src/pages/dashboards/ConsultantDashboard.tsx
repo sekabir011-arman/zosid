@@ -8,13 +8,20 @@ import {
   ArrowRight,
   BedDouble,
   Bell,
+  CheckCircle2,
   ClipboardList,
   Clock,
   FileText,
+  Pill,
   Stethoscope,
   Users,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import {
+  type MissedDoseEscalation,
+  acknowledgeEscalation,
+  loadEscalations,
+} from "../../components/NurseDueMeds";
 import { useEmailAuth } from "../../hooks/useEmailAuth";
 import type { Patient } from "../../types";
 
@@ -146,6 +153,20 @@ export default function ConsultantDashboard() {
     (r) => r.status === "draft_awaiting_approval",
   ).length;
 
+  // Medication escalation alerts
+  const [escalations, setEscalations] = useState<MissedDoseEscalation[]>(() =>
+    loadEscalations().filter((e) => !e.acknowledged),
+  );
+
+  function handleAcknowledge(patientId: string, drugName: string) {
+    acknowledgeEscalation(patientId, drugName);
+    setEscalations((prev) =>
+      prev.filter(
+        (e) => !(e.patientId === patientId && e.drugName === drugName),
+      ),
+    );
+  }
+
   return (
     <div
       className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6"
@@ -189,7 +210,7 @@ export default function ConsultantDashboard() {
         <StatCard
           icon={Bell}
           label="Active Alerts"
-          value={criticalPatients.length}
+          value={criticalPatients.length + escalations.length}
           color="bg-red-100 text-red-700"
         />
       </div>
@@ -239,6 +260,92 @@ export default function ConsultantDashboard() {
             ))}
           </CardContent>
         </Card>
+      )}
+
+      {/* Medication Alerts Panel */}
+      {escalations.length > 0 && (
+        <Card
+          className="border-amber-300 bg-amber-50/60"
+          data-ocid="consultant.medication_alerts.panel"
+        >
+          <CardHeader className="pb-3 pt-4 px-5">
+            <div className="flex items-center gap-2">
+              <Pill className="w-4 h-4 text-amber-700" />
+              <h2 className="font-semibold text-amber-800 text-sm">
+                ⚠️ Medication Alerts
+              </h2>
+              <Badge className="bg-amber-600 text-white text-xs ml-1">
+                {escalations.length} unacknowledged
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="px-5 pb-4">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-amber-200">
+                    <th className="text-left py-2 px-3 font-semibold text-amber-800">
+                      Patient
+                    </th>
+                    <th className="text-left py-2 px-3 font-semibold text-amber-800">
+                      Drug
+                    </th>
+                    <th className="text-center py-2 px-3 font-semibold text-amber-800">
+                      Times Missed
+                    </th>
+                    <th className="text-left py-2 px-3 font-semibold text-amber-800">
+                      Last Missed At
+                    </th>
+                    <th className="py-2 px-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {escalations.map((esc, i) => (
+                    <tr
+                      key={`${esc.patientId}-${esc.drugName}`}
+                      className="border-b border-amber-100 last:border-0"
+                      data-ocid={`consultant.medication_alert.${i + 1}`}
+                    >
+                      <td className="py-2 px-3 font-medium">
+                        {esc.patientName}
+                      </td>
+                      <td className="py-2 px-3">{esc.drugName}</td>
+                      <td className="py-2 px-3 text-center">
+                        <span className="font-bold text-red-700">
+                          {esc.missedCount}×
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-muted-foreground">
+                        {new Date(esc.timestamp).toLocaleString()}
+                      </td>
+                      <td className="py-2 px-3 text-right">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-2 text-[10px] border-amber-400 text-amber-800 hover:bg-amber-100 gap-1"
+                          onClick={() =>
+                            handleAcknowledge(esc.patientId, esc.drugName)
+                          }
+                          data-ocid={`consultant.medication_alert.acknowledge.${i + 1}`}
+                        >
+                          <CheckCircle2 className="w-3 h-3" />
+                          Acknowledge
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Stats badge on Bell stat card — show escalation count */}
+      {escalations.length > 0 && (
+        <div className="sr-only" aria-live="polite">
+          {escalations.length} unacknowledged medication missed-dose alerts
+        </div>
       )}
 
       {/* Patient Tabs */}

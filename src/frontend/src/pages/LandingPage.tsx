@@ -952,7 +952,7 @@ function ClassroomContent({
             />
           </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {cls.videos
             .filter(
               (vid: any) =>
@@ -963,116 +963,18 @@ function ClassroomContent({
                   .includes(videoSearch.toLowerCase()),
             )
             .map((vid: any, idx: number) => (
-              <Card
+              <VideoThumbnailCard
                 key={vid.title + String(idx)}
-                className={`border ${border} hover:shadow-md transition-all`}
-              >
-                <CardContent className="p-4 flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
-                    <Youtube className="w-4 h-4 text-red-600" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    {editVideoIdx === idx ? (
-                      <div className="space-y-1.5">
-                        <Input
-                          value={editVideoForm.title}
-                          onChange={(e) =>
-                            setEditVideoForm((f) => ({
-                              ...f,
-                              title: e.target.value,
-                            }))
-                          }
-                          placeholder="Title"
-                          className="h-7 text-xs"
-                        />
-                        <Input
-                          value={editVideoForm.url}
-                          onChange={(e) =>
-                            setEditVideoForm((f) => ({
-                              ...f,
-                              url: e.target.value,
-                            }))
-                          }
-                          placeholder="YouTube URL"
-                          className="h-7 text-xs"
-                        />
-                        <Input
-                          value={editVideoForm.description}
-                          onChange={(e) =>
-                            setEditVideoForm((f) => ({
-                              ...f,
-                              description: e.target.value,
-                            }))
-                          }
-                          placeholder="Description"
-                          className="h-7 text-xs"
-                        />
-                        <div className="flex gap-1">
-                          <Button
-                            size="sm"
-                            className="h-6 text-xs"
-                            onClick={saveEditVideo}
-                            data-ocid="classroom.videos.save_button"
-                          >
-                            Save
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-6 text-xs"
-                            onClick={() => setEditVideoIdx(null)}
-                            data-ocid="classroom.videos.cancel_button"
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <p className="font-medium text-sm text-foreground">
-                          {vid.title}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {vid.description}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                  <div className="flex items-start gap-1 shrink-0">
-                    <a
-                      href={vid.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-0.5 hover:text-red-600"
-                    >
-                      <ExternalLink className="w-4 h-4 text-muted-foreground" />
-                    </a>
-                    {isAdmin && (
-                      <>
-                        <button
-                          type="button"
-                          className="p-0.5 hover:text-primary"
-                          onClick={() => {
-                            setEditVideoIdx(idx);
-                            setEditVideoForm(vid);
-                          }}
-                          data-ocid={`classroom.videos.edit_button.${idx + 1}`}
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          className="p-0.5 hover:text-destructive"
-                          onClick={() => deleteVideo(idx)}
-                          data-ocid={`classroom.videos.delete_button.${idx + 1}`}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+                vid={vid}
+                idx={idx}
+                isAdmin={isAdmin}
+                editVideoIdx={editVideoIdx}
+                editVideoForm={editVideoForm}
+                setEditVideoIdx={setEditVideoIdx}
+                setEditVideoForm={setEditVideoForm}
+                onSaveEdit={saveEditVideo}
+                onDelete={deleteVideo}
+              />
             ))}
         </div>
         <Dialog open={addVideo} onOpenChange={setAddVideo}>
@@ -2280,6 +2182,178 @@ function InterpretationRefPDFAdmin() {
   );
 }
 
+// ─── YouTube thumbnail helper ─────────────────────────────────────────────────
+
+function getYouTubeId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (u.hostname === "youtu.be") return u.pathname.slice(1);
+    if (u.hostname.includes("youtube.com")) return u.searchParams.get("v");
+  } catch {}
+  return null;
+}
+
+// ─── Video Thumbnail Card ─────────────────────────────────────────────────────
+
+function VideoThumbnailCard({
+  vid,
+  idx,
+  isAdmin,
+  editVideoIdx,
+  editVideoForm,
+  setEditVideoIdx,
+  setEditVideoForm,
+  onSaveEdit,
+  onDelete,
+}: {
+  vid: { title: string; url: string; description?: string };
+  idx: number;
+  isAdmin: boolean;
+  editVideoIdx: number | null;
+  editVideoForm: { title: string; url: string; description: string };
+  setEditVideoIdx: (i: number | null) => void;
+  setEditVideoForm: (f: {
+    title: string;
+    url: string;
+    description: string;
+  }) => void;
+  onSaveEdit: () => void;
+  onDelete: (i: number) => void;
+}) {
+  const ytId = getYouTubeId(vid.url);
+  return (
+    <Card
+      key={vid.title + String(idx)}
+      className="border border-border hover:shadow-md transition-all overflow-hidden"
+    >
+      {editVideoIdx === idx ? (
+        <CardContent className="p-4 space-y-1.5">
+          <Input
+            value={editVideoForm.title}
+            onChange={(e) =>
+              setEditVideoForm({ ...editVideoForm, title: e.target.value })
+            }
+            placeholder="Title"
+            className="h-7 text-xs"
+          />
+          <Input
+            value={editVideoForm.url}
+            onChange={(e) =>
+              setEditVideoForm({ ...editVideoForm, url: e.target.value })
+            }
+            placeholder="YouTube URL"
+            className="h-7 text-xs"
+          />
+          <Input
+            value={editVideoForm.description}
+            onChange={(e) =>
+              setEditVideoForm({
+                ...editVideoForm,
+                description: e.target.value,
+              })
+            }
+            placeholder="Description"
+            className="h-7 text-xs"
+          />
+          <div className="flex gap-1">
+            <Button
+              size="sm"
+              className="h-6 text-xs"
+              onClick={onSaveEdit}
+              data-ocid="classroom.videos.save_button"
+            >
+              Save
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 text-xs"
+              onClick={() => setEditVideoIdx(null)}
+              data-ocid="classroom.videos.cancel_button"
+            >
+              Cancel
+            </Button>
+          </div>
+        </CardContent>
+      ) : (
+        <>
+          <a
+            href={vid.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block relative aspect-video bg-muted overflow-hidden group"
+          >
+            {ytId ? (
+              <img
+                src={`https://img.youtube.com/vi/${ytId}/hqdefault.jpg`}
+                alt={vid.title}
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                loading="lazy"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-muted">
+                <Youtube className="w-12 h-12 text-muted-foreground" />
+              </div>
+            )}
+            <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors">
+              <div className="w-12 h-12 rounded-full bg-white/90 flex items-center justify-center shadow-lg">
+                <svg
+                  viewBox="0 0 24 24"
+                  className="w-5 h-5 fill-red-600 ml-0.5"
+                  aria-hidden="true"
+                >
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </div>
+            </div>
+          </a>
+          <CardContent className="p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="font-medium text-sm text-foreground truncate">
+                  {vid.title}
+                </p>
+                {vid.description && (
+                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                    {vid.description}
+                  </p>
+                )}
+              </div>
+              {isAdmin && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    className="p-0.5 hover:text-primary"
+                    onClick={() => {
+                      setEditVideoIdx(idx);
+                      setEditVideoForm({
+                        title: vid.title,
+                        url: vid.url,
+                        description: vid.description || "",
+                      });
+                    }}
+                    data-ocid={`classroom.videos.edit_button.${idx + 1}`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="p-0.5 hover:text-destructive"
+                    onClick={() => onDelete(idx)}
+                    data-ocid={`classroom.videos.delete_button.${idx + 1}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </>
+      )}
+    </Card>
+  );
+}
+
 // ─── Main Landing Page ────────────────────────────────────────────────────────
 
 export default function LandingPage({
@@ -2292,6 +2366,7 @@ export default function LandingPage({
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [emergencyOpen, setEmergencyOpen] = useState(false);
+  const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
   const [editProfileKey, setEditProfileKey] = useState<DoctorKey | null>(null);
   type ChamberForm = {
     id: string;
@@ -2794,39 +2869,111 @@ export default function LandingPage({
         </AnimatePresence>
       </header>
 
-      {/* ── Home / Hero ─────────────────────────────────────────────── */}
-      <section id="home" className="py-16 sm:py-24 px-4 sm:px-6">
+      {/* ── Hero Section ─────────────────────────────────────────── */}
+      <section
+        className="relative overflow-hidden"
+        style={{
+          background: "linear-gradient(135deg, #1d4ed8 0%, #0d9488 100%)",
+        }}
+        data-ocid="landing.hero.section"
+      >
+        <div
+          className="absolute inset-0 opacity-10"
+          style={{
+            backgroundImage:
+              "url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")",
+          }}
+        />
+        <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-20 sm:py-28 text-center">
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.7 }}
+          >
+            <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-white mb-4 leading-tight">
+              Expert Medical Care —<br className="hidden sm:block" /> Book Your
+              Appointment Today
+            </h1>
+            <p className="text-blue-100 text-lg sm:text-xl max-w-2xl mx-auto mb-8">
+              Compassionate, evidence-based care for your family's health
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <button
+                type="button"
+                onClick={() =>
+                  document
+                    .getElementById("booking-section")
+                    ?.scrollIntoView({ behavior: "smooth" })
+                }
+                className="inline-flex items-center justify-center gap-2 bg-white text-blue-700 font-bold px-8 py-3.5 rounded-xl text-lg shadow-lg hover:shadow-xl hover:bg-blue-50 transition-all"
+                data-ocid="hero.book_appointment.primary_button"
+              >
+                <CalendarDays className="w-5 h-5" />
+                Book Appointment
+              </button>
+              <button
+                type="button"
+                onClick={() => setEmergencyOpen(true)}
+                className="inline-flex items-center justify-center gap-2 bg-red-500/90 text-white font-semibold px-8 py-3.5 rounded-xl text-lg shadow-lg hover:bg-red-500 transition-all"
+                data-ocid="hero.emergency.button"
+              >
+                <AlertTriangle className="w-5 h-5" />
+                Emergency
+              </button>
+            </div>
+          </motion.div>
+
+          {/* Trust badges */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.7, delay: 0.25 }}
+            className="mt-12 grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl mx-auto"
+            data-ocid="hero.trust_badges.section"
+          >
+            {[
+              { icon: "🏥", label: "2 Expert Doctors" },
+              { icon: "👥", label: "500+ Patients Treated" },
+              { icon: "⭐", label: "10+ Years Experience" },
+              { icon: "📱", label: "English & Bangla" },
+            ].map((badge) => (
+              <div
+                key={badge.label}
+                className="bg-white/15 backdrop-blur-sm border border-white/20 rounded-xl px-3 py-3 text-white text-center"
+              >
+                <div className="text-2xl mb-1">{badge.icon}</div>
+                <div className="text-xs font-semibold leading-tight">
+                  {badge.label}
+                </div>
+              </div>
+            ))}
+          </motion.div>
+        </div>
+      </section>
+
+      {/* ── Home / Hero (doctor profiles) ───────────────────────── */}
+      <section id="home" className="py-16 sm:py-20 px-4 sm:px-6 bg-background">
         <div className="max-w-6xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
-            className="text-center mb-14"
+            className="text-center mb-10"
           >
             <div className="inline-flex items-center gap-2 bg-primary/10 text-primary px-4 py-1.5 rounded-full text-sm font-medium mb-5">
               <Heart className="w-4 h-4" />
               Excellence in Patient Care &amp; Medical Education
             </div>
-            <h1 className="font-display text-4xl sm:text-5xl md:text-6xl font-bold text-foreground mb-4 leading-tight">
-              Dr. Arman Kabir&apos;s
-              <span className="text-primary"> Care</span>
-            </h1>
-            <p className="text-muted-foreground text-lg max-w-xl mx-auto">
+            <h2
+              className="font-display text-3xl sm:text-4xl font-bold text-foreground mb-3 leading-tight"
+              id="doctors-section"
+            >
+              Meet Our Consultants
+            </h2>
+            <p className="text-muted-foreground text-base max-w-xl mx-auto">
               A comprehensive patient management and medical education platform
               serving patients and students across Bangladesh.
             </p>
-            <div className="mt-6">
-              <Button
-                variant="destructive"
-                size="lg"
-                className="gap-2 font-semibold shadow-lg"
-                onClick={() => setEmergencyOpen(true)}
-                data-ocid="landing.emergency_hero.button"
-              >
-                <AlertTriangle className="w-5 h-5" />
-                Emergency Consultation
-              </Button>
-            </div>
           </motion.div>
 
           {/* Doctor Profile Cards */}
@@ -2915,7 +3062,11 @@ export default function LandingPage({
                       <div className="mt-4 flex gap-2 flex-wrap">
                         <button
                           type="button"
-                          onClick={() => scrollTo("appointments")}
+                          onClick={() =>
+                            document
+                              .getElementById("booking-section")
+                              ?.scrollIntoView({ behavior: "smooth" })
+                          }
                           className={`flex-1 text-center py-2 rounded-lg text-sm font-semibold ${accentColor} transition-opacity hover:opacity-90`}
                         >
                           Book Appointment
@@ -2983,9 +3134,58 @@ export default function LandingPage({
         </div>
       </section>
 
-      {/* ── Classroom ──────────────────────────────────────────────── */}
-      <section id="classroom" className="py-16 bg-muted/30 px-4 sm:px-6">
+      {/* ── Trust Signals ───────────────────────────────────────── */}
+      <section
+        className="py-14 px-4 sm:px-6 bg-blue-50 border-y border-blue-100"
+        data-ocid="landing.trust_signals.section"
+      >
         <div className="max-w-6xl mx-auto">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+            {[
+              { value: "500+", label: "Patients Treated", icon: "👥" },
+              { value: "10+", label: "Years Experience", icon: "⭐" },
+              { value: "2", label: "Expert Consultants", icon: "🩺" },
+              { value: "Bilingual", label: "English & Bangla", icon: "🌐" },
+            ].map((stat) => (
+              <div
+                key={stat.label}
+                className="bg-white rounded-2xl p-5 text-center shadow-sm border border-blue-100"
+              >
+                <div className="text-3xl mb-1">{stat.icon}</div>
+                <div className="text-2xl font-bold text-blue-700">
+                  {stat.value}
+                </div>
+                <div className="text-sm text-muted-foreground mt-0.5">
+                  {stat.label}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2 justify-center">
+            {[
+              "BSMMU",
+              "DMCH",
+              "Dhaka Medical College",
+              "National Institute of Diseases of Chest & Hospital",
+            ].map((affil) => (
+              <span
+                key={affil}
+                className="px-3 py-1.5 bg-white border border-blue-200 rounded-full text-xs font-medium text-blue-700 shadow-sm"
+              >
+                🏥 {affil}
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Classroom ──────────────────────────────────────────────── */}
+      <section
+        id="classroom"
+        className="py-16 bg-muted/30 px-4 sm:px-6"
+        data-ocid="landing.classroom.section"
+      >
+        <div className="max-w-6xl mx-auto" id="classrooms-section">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -3205,6 +3405,18 @@ export default function LandingPage({
                                   {chamber.address}
                                 </p>
                               )}
+                              {(chamber.address || chamber.addressBn) && (
+                                <a
+                                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(chamber.address || chamber.addressBn || "")}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 mt-2 text-xs text-blue-500 hover:text-blue-700 transition-colors"
+                                  data-ocid="chamber.maps.link"
+                                >
+                                  <MapPin className="w-3 h-3" />
+                                  View on Map
+                                </a>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -3417,7 +3629,7 @@ export default function LandingPage({
 
       {/* ── Appointments ────────────────────────────────────────────── */}
       <section id="appointments" className="py-16 bg-muted/30 px-4 sm:px-6">
-        <div className="max-w-2xl mx-auto">
+        <div className="max-w-2xl mx-auto" id="booking-section">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -3706,20 +3918,97 @@ export default function LandingPage({
                               data-ocid="appointments.chamber.date_input"
                             />
                           </div>
-                          <div className="space-y-1.5">
-                            <Label>Preferred Time</Label>
-                            <Input
-                              type="time"
-                              value={chamberForm.time}
-                              onChange={(e) =>
-                                setChamberForm((f) => ({
-                                  ...f,
-                                  time: e.target.value,
-                                }))
-                              }
-                              data-ocid="appointments.chamber.time_input"
-                            />
+                        </div>
+
+                        {/* Time Slot Chips */}
+                        {chamberForm.date && (
+                          <div className="space-y-2">
+                            <Label className="text-sm font-medium">
+                              Today&apos;s Available Times
+                            </Label>
+                            <div className="flex flex-wrap gap-2">
+                              {(() => {
+                                const slots: string[] = [];
+                                for (let h = 9; h < 17; h++) {
+                                  for (const m of [0, 30]) {
+                                    const hh = String(h).padStart(2, "0");
+                                    const mm = String(m).padStart(2, "0");
+                                    slots.push(`${hh}:${mm}`);
+                                  }
+                                }
+                                const existingBookings: PublicBooking[] =
+                                  (() => {
+                                    try {
+                                      return JSON.parse(
+                                        localStorage.getItem(
+                                          "public_appointment_requests",
+                                        ) || "[]",
+                                      );
+                                    } catch {
+                                      return [];
+                                    }
+                                  })();
+                                const bookedTimes = new Set(
+                                  existingBookings
+                                    .filter(
+                                      (b) =>
+                                        (b.preferredDate || b.date) ===
+                                        chamberForm.date,
+                                    )
+                                    .map((b) => b.preferredTime || b.time)
+                                    .filter(Boolean),
+                                );
+                                return slots.map((slot) => {
+                                  const isBooked = bookedTimes.has(slot);
+                                  const [hh, mm] = slot.split(":");
+                                  const h = Number.parseInt(hh, 10);
+                                  const ampm = h >= 12 ? "PM" : "AM";
+                                  const h12 =
+                                    h > 12 ? h - 12 : h === 0 ? 12 : h;
+                                  const label = `${h12}:${mm} ${ampm}`;
+                                  return (
+                                    <button
+                                      key={slot}
+                                      type="button"
+                                      disabled={isBooked}
+                                      onClick={() =>
+                                        !isBooked &&
+                                        setChamberForm((f) => ({
+                                          ...f,
+                                          time: slot,
+                                        }))
+                                      }
+                                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border ${
+                                        chamberForm.time === slot
+                                          ? "bg-primary text-primary-foreground border-primary"
+                                          : isBooked
+                                            ? "bg-muted text-muted-foreground border-border cursor-not-allowed line-through"
+                                            : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                                      }`}
+                                      data-ocid={`appointments.chamber.slot.${slot.replace(":", "")}`}
+                                    >
+                                      {label}
+                                    </button>
+                                  );
+                                });
+                              })()}
+                            </div>
                           </div>
+                        )}
+
+                        <div className="space-y-1.5">
+                          <Label>Preferred Time</Label>
+                          <Input
+                            type="time"
+                            value={chamberForm.time}
+                            onChange={(e) =>
+                              setChamberForm((f) => ({
+                                ...f,
+                                time: e.target.value,
+                              }))
+                            }
+                            data-ocid="appointments.chamber.time_input"
+                          />
                         </div>
 
                         <div className="space-y-1.5">
@@ -4083,64 +4372,200 @@ export default function LandingPage({
         </section>
       )}
       {/* ── Footer ──────────────────────────────────────────────────── */}
-      <footer className="py-8 border-t border-border bg-muted/20 px-4">
-        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center">
-              <Stethoscope className="w-4 h-4 text-primary-foreground" />
+      <footer
+        className="bg-slate-800 text-white px-4 sm:px-6 pt-12 pb-6"
+        data-ocid="landing.footer.section"
+      >
+        <div className="max-w-6xl mx-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 mb-8">
+            {/* Left: Clinic Info */}
+            <div>
+              <div className="flex items-center gap-2.5 mb-4">
+                <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center">
+                  <Stethoscope className="w-5 h-5 text-white" />
+                </div>
+                <span className="font-bold text-xl text-white">
+                  Dr. Arman Kabir&apos;s Care
+                </span>
+              </div>
+              <p className="text-slate-300 text-sm mb-4 max-w-sm">
+                Comprehensive patient management and medical education serving
+                patients and students across Bangladesh.
+              </p>
+              <div className="space-y-2 text-sm text-slate-300">
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-blue-400 shrink-0" />
+                  <span>Dhaka, Bangladesh</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Phone className="w-4 h-4 text-blue-400 shrink-0" />
+                  <span>{armanDoc.phone}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Mail className="w-4 h-4 text-blue-400 shrink-0" />
+                  <span>{armanDoc.email}</span>
+                </div>
+              </div>
+              <a
+                href="https://www.google.com/maps/search/?api=1&query=Dhaka+Bangladesh"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 mt-4 text-sm text-blue-400 hover:text-blue-300 transition-colors"
+                data-ocid="footer.get_directions.link"
+              >
+                <MapPin className="w-4 h-4" />📍 Get Directions
+              </a>
             </div>
-            <span className="text-sm font-semibold text-foreground">
-              Dr. Arman Kabir&apos;s Care
-            </span>
+            {/* Right: Quick Links */}
+            <div>
+              <h3 className="font-semibold text-white mb-4">Quick Links</h3>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    document
+                      .getElementById("booking-section")
+                      ?.scrollIntoView({ behavior: "smooth" })
+                  }
+                  className="text-left text-sm text-slate-300 hover:text-white transition-colors py-1 flex items-center gap-2"
+                  data-ocid="footer.book_appointment.link"
+                >
+                  <CalendarDays className="w-3.5 h-3.5 text-blue-400" />
+                  Book Appointment
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEmergencyOpen(true)}
+                  className="text-left text-sm text-slate-300 hover:text-white transition-colors py-1 flex items-center gap-2"
+                  data-ocid="footer.emergency.button"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
+                  Emergency WhatsApp
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    document
+                      .getElementById("doctors-section")
+                      ?.scrollIntoView({ behavior: "smooth" })
+                  }
+                  className="text-left text-sm text-slate-300 hover:text-white transition-colors py-1 flex items-center gap-2"
+                  data-ocid="footer.doctors.link"
+                >
+                  <Stethoscope className="w-3.5 h-3.5 text-blue-400" />
+                  Doctor Profiles
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    document
+                      .getElementById("classrooms-section")
+                      ?.scrollIntoView({ behavior: "smooth" })
+                  }
+                  className="text-left text-sm text-slate-300 hover:text-white transition-colors py-1 flex items-center gap-2"
+                  data-ocid="footer.classrooms.link"
+                >
+                  <BookOpen className="w-3.5 h-3.5 text-blue-400" />
+                  Classrooms
+                </button>
+                <button
+                  type="button"
+                  onClick={onLoginClick}
+                  className="text-left text-sm text-slate-300 hover:text-white transition-colors py-1 flex items-center gap-2"
+                  data-ocid="footer.staff_login.button"
+                >
+                  <Stethoscope className="w-3.5 h-3.5 text-blue-400" />
+                  Staff Login
+                </button>
+                <button
+                  type="button"
+                  onClick={onAdminLoginClick}
+                  className="text-left text-sm text-slate-300 hover:text-white transition-colors py-1 flex items-center gap-2"
+                  data-ocid="footer.admin_login.button"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                  Admin Login
+                </button>
+              </div>
+            </div>
           </div>
-          <p className="text-xs text-muted-foreground text-center">
-            © {new Date().getFullYear()}. Built with{" "}
-            <Heart className="w-3 h-3 inline text-rose-500" /> using{" "}
-            <a
-              href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(typeof window !== "undefined" ? window.location.hostname : "")}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline hover:text-foreground"
+
+          {/* Bottom bar */}
+          <div className="border-t border-slate-700 pt-5 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <p className="text-xs text-slate-400 text-center">
+              © {new Date().getFullYear()} Dr. Arman Kabir&apos;s Care. All
+              rights reserved. Built with{" "}
+              <Heart className="w-3 h-3 inline text-rose-400" /> using{" "}
+              <a
+                href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(typeof window !== "undefined" ? window.location.hostname : "")}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-slate-200"
+              >
+                caffeine.ai
+              </a>
+            </p>
+            <button
+              type="button"
+              onClick={() => setPrivacyModalOpen(true)}
+              className="text-xs text-slate-400 hover:text-slate-200 transition-colors underline"
+              data-ocid="footer.privacy_policy.link"
             >
-              caffeine.ai
-            </a>
-          </p>
-          <div className="flex items-center gap-3">
-            <Button
-              size="sm"
-              variant="ghost"
-              className="text-xs gap-1.5"
-              onClick={onLoginClick}
-              data-ocid="footer.staff_login.button"
-            >
-              <Stethoscope className="w-3.5 h-3.5" />
-              Staff Login
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="text-xs gap-1.5 text-amber-700"
-              onClick={onAdminLoginClick}
-              data-ocid="footer.admin_login.button"
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Admin
-            </Button>
+              Privacy Policy
+            </button>
           </div>
         </div>
       </footer>
 
-      {/* Floating Emergency Button (mobile) */}
-      <div className="fixed bottom-6 right-6 md:hidden z-40">
-        <button
-          type="button"
-          className="w-14 h-14 rounded-full bg-destructive text-white shadow-xl flex items-center justify-center hover:bg-destructive/90 active:scale-95 transition-all"
-          onClick={() => setEmergencyOpen(true)}
-          data-ocid="landing.emergency_fab.button"
-        >
-          <AlertTriangle className="w-6 h-6" />
-        </button>
-      </div>
+      {/* Privacy Policy Modal */}
+      <Dialog open={privacyModalOpen} onOpenChange={setPrivacyModalOpen}>
+        <DialogContent className="max-w-md" data-ocid="privacy.dialog">
+          <DialogHeader>
+            <DialogTitle>Privacy Policy</DialogTitle>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground space-y-3">
+            <p>
+              We collect patient information solely for medical care purposes.
+              Data is stored securely and never shared with third parties
+              without consent.
+            </p>
+            <p>
+              Your personal data (name, contact information, medical history) is
+              used only to facilitate appointments, clinical records, and
+              communications from your doctor.
+            </p>
+            <p>
+              You may request access to, correction of, or deletion of your
+              personal data by contacting the clinic directly.
+            </p>
+            <p className="text-xs text-muted-foreground/70">
+              Last updated: {new Date().getFullYear()}. Dr. Arman Kabir&apos;s
+              Care, Dhaka, Bangladesh.
+            </p>
+          </div>
+          <div className="mt-4">
+            <Button
+              onClick={() => setPrivacyModalOpen(false)}
+              className="w-full"
+              data-ocid="privacy.close_button"
+            >
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Sticky Emergency WhatsApp Button (mobile only) */}
+      <button
+        type="button"
+        className="md:hidden fixed bottom-4 right-4 z-50 bg-green-500 hover:bg-green-600 text-white rounded-2xl px-4 py-3 shadow-xl flex items-center gap-2 font-semibold text-sm transition-all active:scale-95"
+        onClick={() => setEmergencyOpen(true)}
+        data-ocid="landing.whatsapp_fab.button"
+        aria-label="Emergency consultation via WhatsApp"
+      >
+        <span className="text-base">💬</span>
+        Emergency Consult
+      </button>
     </div>
   );
 }

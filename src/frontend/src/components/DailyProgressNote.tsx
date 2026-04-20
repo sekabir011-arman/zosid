@@ -768,9 +768,94 @@ export default function DailyProgressNote({
     toast.success(`Template "${name}" applied`);
   }
 
+  // ── Plan → Prescription Auto-link ────────────────────────────────────────
+  const [planSyncedAt, setPlanSyncedAt] = useState<string | null>(null);
+
+  function mergePlanIntoPrescription(planItems: PlanItem[]) {
+    const drugItems = planItems.filter((p) => p.category === "drug");
+    if (drugItems.length === 0) return false;
+
+    const primaryDx = note.activeDiagnoses.find(
+      (d) => d.classification === "Primary" && d.status === "active",
+    );
+    const key = `prescriptions_${doctorEmail}_${patientId}`;
+    try {
+      const all: Prescription[] = (() => {
+        const raw = localStorage.getItem(key);
+        if (!raw) return [];
+        return JSON.parse(raw) as Prescription[];
+      })();
+
+      // Deduplicate: skip drugs already in the most recent prescription
+      const existingDrugNames = new Set(
+        (all[0]?.medications ?? []).map((m) =>
+          (m.name ?? m.drugName ?? "").toLowerCase(),
+        ),
+      );
+      const newDrugs = drugItems.filter(
+        (p) => !existingDrugNames.has(p.description.toLowerCase()),
+      );
+      if (newDrugs.length === 0) return false;
+
+      const timestamp = new Date().toISOString();
+      const rx: Prescription = {
+        id: BigInt(Date.now()),
+        patientId: BigInt(patientId),
+        prescriptionDate: BigInt(Date.now() * 1_000_000),
+        diagnosis: primaryDx
+          ? primaryDx.name
+          : note.activeDiagnoses
+              .filter((d) => d.status === "active")
+              .map((d) => d.name)
+              .join(", ") || "Daily Progress Note",
+        medications: newDrugs.map((p) => ({
+          name: p.description,
+          dose: p.dose || "",
+          frequency: p.frequency || "",
+          duration: p.duration || "",
+          instructions: p.route || "",
+          drugForm: p.form || "",
+          drugName: p.description,
+          route: p.route || "",
+        })),
+        notes: `Updated from Daily Progress Plan — ${timestamp}`,
+        createdAt: BigInt(Date.now() * 1_000_000),
+      };
+
+      const serialised = [rx, ...all].map((p) => ({
+        ...p,
+        id: String(p.id),
+        patientId: String(p.patientId),
+        prescriptionDate: String(p.prescriptionDate),
+        createdAt: String(p.createdAt),
+      }));
+      localStorage.setItem(key, JSON.stringify(serialised));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // ── Save note (explicit) ──────────────────────────────────────────────────
   function saveCurrentNote() {
     saveNote(doctorEmail, patientId, today, note);
+
+    // Auto-trigger plan → prescription sync if plan has drug items
+    const hasDrugs = note.planItems.some((p) => p.category === "drug");
+    if (hasDrugs && canEdit) {
+      const merged = mergePlanIntoPrescription(note.planItems);
+      if (merged) {
+        const ts = new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+        setPlanSyncedAt(ts);
+        toast.success("Plan drugs added to active prescription", {
+          description: `Synced at ${ts}`,
+        });
+      }
+    }
+
     toast.success("Daily note saved");
   }
 
@@ -1836,7 +1921,20 @@ export default function DailyProgressNote({
             </div>
           )}
 
-          {/* Save as prescription */}
+          {/* Auto-sync badge */}
+          {planSyncedAt && (
+            <div className="flex items-center gap-2 rounded-xl px-4 py-2 bg-green-50 border border-green-200 text-sm text-green-700">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-green-600" />
+              <span>
+                <span className="font-semibold">
+                  Updated from Daily Progress Plan
+                </span>{" "}
+                · auto-synced at {planSyncedAt}
+              </span>
+            </div>
+          )}
+
+          {/* Save as prescription (manual) */}
           {canEdit && note.planItems.some((p) => p.category === "drug") && (
             <Button
               onClick={savePlanAsPrescription}
@@ -1844,7 +1942,7 @@ export default function DailyProgressNote({
               data-ocid="daily_note.save_as_prescription_button"
             >
               <Zap className="w-4 h-4" />
-              Save Plan as Prescription
+              Save Plan as Prescription (Manual)
             </Button>
           )}
         </div>

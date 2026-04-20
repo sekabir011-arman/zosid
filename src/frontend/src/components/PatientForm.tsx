@@ -9,8 +9,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Camera, Loader2, User } from "lucide-react";
-import { useRef, useState } from "react";
+import {
+  AlertTriangle,
+  Camera,
+  Eye,
+  Loader2,
+  User,
+  UserPlus,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { loadFromStorage } from "../hooks/useQueries";
 import type { Patient } from "../types";
 
 function cmToFeetInches(cm: number): string {
@@ -47,6 +55,27 @@ function ageToApproxDob(age: string): string {
   return `${year}-01-01`;
 }
 
+/** Scan all localStorage patient keys across all doctor emails */
+function loadAllPatients(): Patient[] {
+  const results: Patient[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key?.startsWith("patients_")) continue;
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const items = JSON.parse(raw) as Patient[];
+      if (Array.isArray(items)) results.push(...items);
+    } catch {}
+  }
+  return results;
+}
+
+interface DuplicateMatch {
+  patient: Patient;
+  matchField: "phone" | "email";
+}
+
 export interface PatientFormData {
   fullName: string;
   nameBn: string | null;
@@ -74,6 +103,7 @@ interface PatientFormProps {
   }>;
   onSubmit: (data: PatientFormData) => void;
   onCancel: () => void;
+  onViewExisting?: (patientId: bigint) => void;
   isLoading?: boolean;
 }
 
@@ -82,6 +112,7 @@ export default function PatientForm({
   prefill,
   onSubmit,
   onCancel,
+  onViewExisting,
   isLoading,
 }: PatientFormProps) {
   const dob = patient?.dateOfBirth
@@ -90,8 +121,11 @@ export default function PatientForm({
         .split("T")[0]
     : "";
 
-  const existingPhoto = (patient as any)?.photo ?? null;
-  const existingRegNum = (patient as any)?.registerNumber ?? null;
+  const existingPhoto =
+    ((patient as Record<string, unknown>)?.photo as string | null) ?? null;
+  const existingRegNum =
+    ((patient as Record<string, unknown>)?.registerNumber as string | null) ??
+    null;
 
   const [form, setForm] = useState({
     fullName: patient?.fullName ?? prefill?.fullName ?? "",
@@ -110,6 +144,52 @@ export default function PatientForm({
 
   const [photo, setPhoto] = useState<string | null>(existingPhoto);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Duplicate detection state ──────────────────────────────────────────────
+  const [duplicateMatch, setDuplicateMatch] = useState<DuplicateMatch | null>(
+    null,
+  );
+  const [proceedAnyway, setProceedAnyway] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Check for duplicates when phone or email changes (debounced 500ms)
+  // Only for new patient registration (no existing patient prop)
+  useEffect(() => {
+    if (patient) return; // editing existing — skip
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      const phone = form.phone.trim();
+      const email = form.email.trim().toLowerCase();
+
+      if (!phone && !email) {
+        setDuplicateMatch(null);
+        return;
+      }
+
+      const allPatients = loadAllPatients();
+      let match: DuplicateMatch | null = null;
+
+      if (phone) {
+        const found = allPatients.find((p) => p.phone?.trim() === phone);
+        if (found) match = { patient: found, matchField: "phone" };
+      }
+
+      if (!match && email) {
+        const found = allPatients.find(
+          (p) => p.email?.trim().toLowerCase() === email,
+        );
+        if (found) match = { patient: found, matchField: "email" };
+      }
+
+      setDuplicateMatch(match);
+      if (match) setProceedAnyway(false);
+    }, 500);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [form.phone, form.email, patient]);
 
   const set = (key: keyof typeof form, val: string) =>
     setForm((prev) => ({ ...prev, [key]: val }));
@@ -156,6 +236,11 @@ export default function PatientForm({
     } catch (err) {
       console.error("PatientForm submit error:", err);
     }
+  };
+
+  const getDuplicateRegNum = () => {
+    const p = duplicateMatch?.patient;
+    return (p as Record<string, unknown>)?.registerNumber as string | undefined;
   };
 
   return (
@@ -232,7 +317,7 @@ export default function PatientForm({
             id="nameBn"
             value={form.nameBn}
             onChange={(e) => set("nameBn", e.target.value)}
-            placeholder="\u09AC\u09BE\u0982\u09B2\u09BE \u09A8\u09BE\u09AE (optional)"
+            placeholder="বাংলা নাম (optional)"
           />
         </div>
       </div>
@@ -309,8 +394,9 @@ export default function PatientForm({
             id="phone"
             value={form.phone}
             onChange={(e) => set("phone", e.target.value)}
-            placeholder="+880\u2026"
+            placeholder="+880…"
             type="tel"
+            data-ocid="patient_form.input"
           />
         </div>
         <div className="space-y-1.5">
@@ -321,6 +407,7 @@ export default function PatientForm({
             onChange={(e) => set("email", e.target.value)}
             placeholder="patient@example.com"
             type="email"
+            data-ocid="patient_form.input"
           />
         </div>
         <div className="sm:col-span-2 space-y-1.5">
@@ -387,6 +474,79 @@ export default function PatientForm({
         </div>
       </div>
 
+      {/* ── Duplicate Detection Warning ────────────────────────────────────── */}
+      {!patient && duplicateMatch && !proceedAnyway && (
+        <div
+          className="flex flex-col gap-3 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3"
+          data-ocid="patient_form.duplicate_warning"
+        >
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-800">
+                Possible duplicate patient
+              </p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                A patient with this{" "}
+                <strong>
+                  {duplicateMatch.matchField === "phone"
+                    ? "phone number"
+                    : "email address"}
+                </strong>{" "}
+                already exists:
+              </p>
+              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                <span className="font-bold text-amber-900 text-sm">
+                  {duplicateMatch.patient.fullName}
+                </span>
+                {getDuplicateRegNum() && (
+                  <Badge
+                    variant="outline"
+                    className="text-xs border-amber-400 text-amber-700 font-mono"
+                  >
+                    {getDuplicateRegNum()}
+                  </Badge>
+                )}
+                {duplicateMatch.patient.gender && (
+                  <Badge
+                    variant="outline"
+                    className="text-xs border-amber-300 text-amber-600"
+                  >
+                    {duplicateMatch.patient.gender}
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {onViewExisting && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5 border-amber-400 text-amber-800 hover:bg-amber-100"
+                onClick={() => onViewExisting(duplicateMatch.patient.id)}
+                data-ocid="patient_form.view_existing_button"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                View Existing Patient
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5 border-amber-400 text-amber-800 hover:bg-amber-100"
+              onClick={() => setProceedAnyway(true)}
+              data-ocid="patient_form.create_anyway_button"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              Create Anyway
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-end gap-3 pt-2">
         <Button
           type="button"
@@ -398,7 +558,11 @@ export default function PatientForm({
         </Button>
         <Button
           type="submit"
-          disabled={isLoading || !form.fullName.trim()}
+          disabled={
+            isLoading ||
+            !form.fullName.trim() ||
+            (!patient && !!duplicateMatch && !proceedAnyway)
+          }
           className="bg-primary hover:bg-primary/90 text-primary-foreground"
           data-ocid="patient_form.submit_button"
         >

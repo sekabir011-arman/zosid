@@ -1,33 +1,31 @@
 {
-  "overview": "Dr. Arman Kabir's Care is a comprehensive bilingual (English/Bangla) Patient Management and Doctor Portal for clinics and individual practitioners. It supports full outpatient and inpatient clinical workflows with role-based access for Consultants, Medical Officers, Intern Doctors, Nurses, Staff, Patients, and Admins. The app is PWA-installable and works offline with automatic cloud sync across all devices.",
+  "overview": "Dr. Arman Kabir's Care is a comprehensive bilingual (English/Bangla) Patient Management and Doctor Portal for clinics and individual practitioners. It supports full outpatient and inpatient workflows with role-based dashboards for Consultants, Medical Officers, Interns, Nurses, Staff, and Patients. Features include prescription writing with clinical intelligence alerts, daily SOAP progress notes, handover system, appointment scheduling, drug reminder tracking, audit trail, and a public landing page for patient-facing appointment booking.",
   "features": [
-    "Role-based dashboards for Consultant, MO, Intern, Nurse, Staff, and Admin",
-    "Full outpatient and inpatient (admitted) patient management",
-    "Visit form with systemic examination and SOAP daily progress notes",
-    "Prescription & EMR with clinical intelligence alerts (drug interactions, allergy, renal dose, sepsis, AKI)",
-    "Bilingual (English/Bangla) UI with Bengali advice templates",
-    "Handover system with auto-detected shifts, Consultant comments, and audible alarm notifications",
-    "Investigation tracking with AI interpretation, 2-stage status, and per-test trend graphs",
-    "Money receipts for appointments and procedures (printable PDF)",
-    "Bed management by hospital name",
-    "Doctor Serial Display with split-screen health education video",
-    "Hybrid storage: offline-first (IndexedDB) with real-time cloud sync across all devices",
-    "Patient portal: complaints, vitals submission, drug reminders, chat with doctor",
-    "Public landing page with appointment booking and emergency WhatsApp consultation",
-    "Full audit trail visible to Admin and Consultant Doctor",
+    "Role-based dashboards (Consultant, MO, Intern, Nurse, Staff, Patient)",
+    "Full outpatient and inpatient clinical workflows",
+    "Prescription & EMR with drug interaction and allergy alerts",
+    "Daily SOAP progress notes for admitted patients",
+    "Shift handover system with audible alerts",
+    "Appointment booking with conflict detection and walk-in support",
+    "Drug reminder system with missed dose escalation",
+    "Patient portal with complaints, vitals, and chat",
+    "Audit log with CSV/PDF export",
+    "Public landing page with appointment booking and emergency WhatsApp",
+    "Offline-first with cloud sync across all devices",
     "PWA installable on Android and iPad"
   ],
   "category": "healthcare",
   "tags": [
     "healthcare",
-    "emr",
     "patient-management",
-    "bilingual",
+    "emr",
+    "prescription",
     "clinical",
+    "bilingual",
+    "bangla",
+    "hospital",
     "doctor-portal",
-    "pwa",
-    "offline-first",
-    "bangladesh"
+    "pwa"
   ],
-  "last_updated": "2026-04-20T01:18:47.607Z"
+  "last_updated": "2026-04-20T03:44:51.595Z"
 }

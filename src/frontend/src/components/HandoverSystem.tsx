@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { type DoctorAccount, loadRegistry } from "../hooks/useEmailAuth";
 import type { StaffRole } from "../types";
 import { STAFF_ROLE_LABELS } from "../types";
 import type { TrackedInvestigation } from "./InvestigationTracker";
@@ -90,7 +91,13 @@ export interface HandoverGivenBy {
 export interface HandoverTakenBy {
   name: string;
   role: string;
+  email: string;
   time: string;
+  /** Acknowledgment fields — filled when the receiving staff clicks "I Have Received This Handover" */
+  acknowledgedAt?: string;
+  acknowledgedBy?: string;
+  acknowledgedByName?: string;
+  acknowledgedRole?: string;
 }
 
 export interface HandoverVitals {
@@ -784,6 +791,12 @@ function HandoverForm({
   const [handoverToName, setHandoverToName] = useState(
     existingDoc?.takenBy?.name ?? "",
   );
+  const [handoverToEmail, setHandoverToEmail] = useState(
+    existingDoc?.takenBy?.email ?? "",
+  );
+  const [handoverToRole, setHandoverToRole] = useState(
+    existingDoc?.takenBy?.role ?? "",
+  );
 
   const [moNotes, setMoNotes] = useState(
     existingDoc?.treatingTeamNotes ??
@@ -818,7 +831,12 @@ function HandoverForm({
         time: format(new Date(), "HH:mm"),
       },
       takenBy: handoverToName
-        ? { name: handoverToName, role: "", time: "" }
+        ? {
+            name: handoverToName,
+            role: handoverToRole,
+            email: handoverToEmail,
+            time: "",
+          }
         : existingDoc?.takenBy,
       patientName,
       registerNumber: registerNumber || "—",
@@ -921,42 +939,82 @@ function HandoverForm({
             title="Handover Header"
             icon={<Clock className="w-3.5 h-3.5" />}
           />
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <Label className={`text-xs font-semibold ${accentLabel}`}>
-                HANDOVER GIVEN BY — Name
-              </Label>
-              <Input
-                value={givenByName}
-                onChange={(e) => setGivenByName(e.target.value)}
-                className="mt-1 bg-white"
-                data-ocid="handover.given_by_name"
-              />
-            </div>
-            <div>
-              <Label className={`text-xs font-semibold ${accentLabel}`}>
-                Role
-              </Label>
-              <Input
-                value={givenByRole}
-                onChange={(e) => setGivenByRole(e.target.value)}
-                className="mt-1 bg-white"
-                data-ocid="handover.given_by_role"
-              />
-            </div>
-            <div>
-              <Label className={`text-xs font-semibold ${accentLabel}`}>
-                HANDOVER TAKEN BY — Name
-              </Label>
-              <Input
-                value={handoverToName}
-                onChange={(e) => setHandoverToName(e.target.value)}
-                placeholder="Incoming nurse/MO name"
-                className="mt-1 bg-white"
-                data-ocid="handover.taken_by_name"
-              />
-            </div>
-          </div>
+          {(() => {
+            const CLINICAL_ROLES: StaffRole[] = [
+              "consultant_doctor",
+              "medical_officer",
+              "intern_doctor",
+              "nurse",
+              "doctor",
+            ];
+            const allStaff: DoctorAccount[] = loadRegistry().filter(
+              (s) => CLINICAL_ROLES.includes(s.role) && s.status === "approved",
+            );
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <Label className={`text-xs font-semibold ${accentLabel}`}>
+                    HANDOVER GIVEN BY — Name
+                  </Label>
+                  <Input
+                    value={givenByName}
+                    onChange={(e) => setGivenByName(e.target.value)}
+                    className="mt-1 bg-white"
+                    data-ocid="handover.given_by_name"
+                  />
+                </div>
+                <div>
+                  <Label className={`text-xs font-semibold ${accentLabel}`}>
+                    Role
+                  </Label>
+                  <Input
+                    value={givenByRole}
+                    onChange={(e) => setGivenByRole(e.target.value)}
+                    className="mt-1 bg-white"
+                    data-ocid="handover.given_by_role"
+                  />
+                </div>
+                <div>
+                  <Label className={`text-xs font-semibold ${accentLabel}`}>
+                    HANDOVER TAKEN BY — Select Staff
+                  </Label>
+                  <select
+                    value={handoverToEmail}
+                    onChange={(e) => {
+                      const email = e.target.value;
+                      setHandoverToEmail(email);
+                      if (!email) {
+                        setHandoverToName("");
+                        setHandoverToRole("");
+                        return;
+                      }
+                      const staff = allStaff.find((s) => s.email === email);
+                      if (staff) {
+                        setHandoverToName(staff.name);
+                        setHandoverToRole(
+                          STAFF_ROLE_LABELS[staff.role] ?? staff.role,
+                        );
+                      }
+                    }}
+                    className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                    data-ocid="handover.taken_by_select"
+                  >
+                    <option value="">— Select incoming staff —</option>
+                    {allStaff.map((s) => (
+                      <option key={s.id} value={s.email}>
+                        {s.name} — {STAFF_ROLE_LABELS[s.role] ?? s.role}
+                      </option>
+                    ))}
+                  </select>
+                  {handoverToName && (
+                    <p className="text-xs text-teal-600 mt-1 font-medium">
+                      ✓ {handoverToName} ({handoverToRole})
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Section 2 – Patient ID (blue band) */}
@@ -1304,17 +1362,34 @@ function TakeOverForm({
   onSaved,
   onCancel,
 }: TakeOverFormProps) {
+  const CLINICAL_ROLES: StaffRole[] = [
+    "consultant_doctor",
+    "medical_officer",
+    "intern_doctor",
+    "nurse",
+    "doctor",
+  ];
+  const allStaff: DoctorAccount[] = loadRegistry().filter(
+    (s) => CLINICAL_ROLES.includes(s.role) && s.status === "approved",
+  );
+
+  const [takenByEmail, setTakenByEmail] = useState(currentUser.email);
   const [takenByName, setTakenByName] = useState(currentUser.name);
   const [takenByRole, setTakenByRole] = useState(currentUser.role);
   const [additionalWork, setAdditionalWork] = useState("");
   const [actionItems, setActionItems] = useState<ActionItem[]>([]);
 
   function save() {
+    if (!takenByName.trim()) {
+      toast.error("Please select the staff taking over");
+      return;
+    }
     const appended: AppendedEntry = {
       id: `app_${Date.now().toString(36)}`,
       takenBy: {
         name: takenByName,
         role: takenByRole,
+        email: takenByEmail,
         time: format(new Date(), "HH:mm"),
       },
       additionalWork,
@@ -1327,6 +1402,7 @@ function TakeOverForm({
       all[idx].takenBy = {
         name: takenByName,
         role: takenByRole,
+        email: takenByEmail,
         time: format(new Date(), "HH:mm"),
       };
       all[idx].appendedEntries = [
@@ -1347,29 +1423,36 @@ function TakeOverForm({
         </h3>
       </div>
       <div className="px-5 py-4 space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label className="text-xs font-semibold text-teal-700">
-              Your Name
-            </Label>
-            <Input
-              value={takenByName}
-              onChange={(e) => setTakenByName(e.target.value)}
-              className="mt-1 bg-white"
-              data-ocid="handover.takeover_name"
-            />
-          </div>
-          <div>
-            <Label className="text-xs font-semibold text-teal-700">
-              Your Role
-            </Label>
-            <Input
-              value={takenByRole}
-              onChange={(e) => setTakenByRole(e.target.value)}
-              className="mt-1 bg-white"
-              data-ocid="handover.takeover_role"
-            />
-          </div>
+        <div>
+          <Label className="text-xs font-semibold text-teal-700">
+            Select Staff Taking Over
+          </Label>
+          <select
+            value={takenByEmail}
+            onChange={(e) => {
+              const email = e.target.value;
+              setTakenByEmail(email);
+              const staff = allStaff.find((s) => s.email === email);
+              if (staff) {
+                setTakenByName(staff.name);
+                setTakenByRole(STAFF_ROLE_LABELS[staff.role] ?? staff.role);
+              }
+            }}
+            className="mt-1 w-full border border-teal-200 rounded-lg px-3 py-2 text-sm bg-white"
+            data-ocid="handover.takeover_select"
+          >
+            <option value="">— Select staff —</option>
+            {allStaff.map((s) => (
+              <option key={s.id} value={s.email}>
+                {s.name} — {STAFF_ROLE_LABELS[s.role] ?? s.role}
+              </option>
+            ))}
+          </select>
+          {takenByName && (
+            <p className="text-xs text-teal-600 mt-1 font-medium">
+              ✓ {takenByName} ({takenByRole})
+            </p>
+          )}
         </div>
         <div>
           <Label className="text-xs font-semibold text-teal-700 mb-1 block">
@@ -2054,16 +2137,70 @@ function DocView({
             </div>
           </div>
 
-          {/* Submission footer */}
+          {/* Submission footer with Acknowledgment */}
           {doc.status === "submitted" && doc.submittedAt && (
-            <div className="px-4 py-2 bg-gray-50 border-t border-gray-100">
+            <div className="px-4 py-3 bg-gray-50 border-t border-gray-100 space-y-2">
               <p className="text-xs text-gray-400">
                 ✅ Submitted at{" "}
                 {format(new Date(doc.submittedAt), "dd MMM yyyy, HH:mm")} by{" "}
                 {doc.givenBy.name}
                 {doc.takenBy?.name &&
-                  ` · Accepted by ${doc.takenBy.name} at ${doc.takenBy.time}`}
+                  ` · Assigned to: ${doc.takenBy.name} (${doc.takenBy.role})`}
               </p>
+
+              {/* Acknowledgment section */}
+              {doc.takenBy?.name && (
+                <div>
+                  {doc.takenBy.acknowledgedAt ? (
+                    <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                      <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+                      <span className="text-xs font-semibold text-green-700">
+                        Acknowledged by{" "}
+                        {doc.takenBy.acknowledgedByName ?? doc.takenBy.name} at{" "}
+                        {format(
+                          new Date(doc.takenBy.acknowledgedAt),
+                          "dd MMM yyyy, HH:mm",
+                        )}
+                      </span>
+                    </div>
+                  ) : currentUser.email === doc.takenBy.email ? (
+                    <Button
+                      size="sm"
+                      className="bg-green-600 hover:bg-green-700 text-white gap-1.5"
+                      onClick={() => {
+                        const all = loadDocs(doc.patientId);
+                        const idx = all.findIndex((d) => d.id === doc.id);
+                        if (idx >= 0 && all[idx].takenBy) {
+                          all[idx].takenBy = {
+                            ...all[idx].takenBy!,
+                            acknowledgedAt: new Date().toISOString(),
+                            acknowledgedBy: currentUser.email,
+                            acknowledgedByName: currentUser.name,
+                            acknowledgedRole: currentUser.role,
+                          };
+                          saveDocs(doc.patientId, all);
+                          toast.success("Handover acknowledged ✓");
+                          onSaved();
+                        }
+                      }}
+                      data-ocid="handover.acknowledge_button"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />I Have Received
+                      This Handover
+                    </Button>
+                  ) : (
+                    <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span className="text-xs text-amber-700">
+                        Awaiting acknowledgment from{" "}
+                        <span className="font-semibold">
+                          {doc.takenBy.name}
+                        </span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

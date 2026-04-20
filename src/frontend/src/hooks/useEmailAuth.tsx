@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import type { StaffRole } from "../types";
@@ -724,4 +725,100 @@ export function useEmailAuth(): EmailAuthContextValue {
   if (!ctx)
     throw new Error("useEmailAuth must be used inside EmailAuthProvider");
   return ctx;
+}
+
+// ── Inactivity Timer ──────────────────────────────────────────────────────────
+
+const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const INACTIVITY_WARNING_MS = 13 * 60 * 1000; // 13 minutes (2 min before logout)
+const ACTIVITY_EVENTS = [
+  "mousemove",
+  "keydown",
+  "click",
+  "touchstart",
+  "scroll",
+] as const;
+
+export interface InactivityTimerState {
+  showWarning: boolean;
+  secondsRemaining: number;
+  resetTimer: () => void;
+}
+
+/**
+ * useInactivityTimer — tracks user activity and triggers auto-logout.
+ * Returns { showWarning, secondsRemaining, resetTimer }.
+ * Must be called inside a component that has access to useEmailAuth.
+ */
+export function useInactivityTimer(onLogout: () => void): InactivityTimerState {
+  const [showWarning, setShowWarning] = useState(false);
+  const [secondsRemaining, setSecondsRemaining] = useState(120);
+
+  const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastActivityRef = useRef<number>(Date.now());
+
+  const clearAllTimers = useCallback(() => {
+    if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+    if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    logoutTimerRef.current = null;
+    warningTimerRef.current = null;
+    countdownRef.current = null;
+  }, []);
+
+  const startTimers = useCallback(() => {
+    clearAllTimers();
+    setShowWarning(false);
+    setSecondsRemaining(120);
+
+    // Warning at 13 minutes
+    warningTimerRef.current = setTimeout(() => {
+      setShowWarning(true);
+      setSecondsRemaining(120);
+      countdownRef.current = setInterval(() => {
+        setSecondsRemaining((s) => {
+          if (s <= 1) {
+            if (countdownRef.current) clearInterval(countdownRef.current);
+            return 0;
+          }
+          return s - 1;
+        });
+      }, 1000);
+    }, INACTIVITY_WARNING_MS);
+
+    // Logout at 15 minutes
+    logoutTimerRef.current = setTimeout(() => {
+      clearAllTimers();
+      setShowWarning(false);
+      onLogout();
+    }, INACTIVITY_TIMEOUT_MS);
+  }, [clearAllTimers, onLogout]);
+
+  const resetTimer = useCallback(() => {
+    lastActivityRef.current = Date.now();
+    startTimers();
+  }, [startTimers]);
+
+  // Start on mount
+  useEffect(() => {
+    startTimers();
+    return clearAllTimers;
+  }, [startTimers, clearAllTimers]);
+
+  // Attach activity listeners
+  useEffect(() => {
+    const handler = () => resetTimer();
+    for (const ev of ACTIVITY_EVENTS) {
+      window.addEventListener(ev, handler, { passive: true });
+    }
+    return () => {
+      for (const ev of ACTIVITY_EVENTS) {
+        window.removeEventListener(ev, handler);
+      }
+    };
+  }, [resetTimer]);
+
+  return { showWarning, secondsRemaining, resetTimer };
 }
