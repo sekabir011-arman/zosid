@@ -18,6 +18,8 @@ import {
   LayoutDashboard,
   Loader2,
   Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pill,
   PlusCircle,
   RefreshCw,
@@ -40,15 +42,8 @@ import { getConflictsCount } from "./lib/hybridStorage";
 import { STAFF_ROLE_COLORS, STAFF_ROLE_LABELS } from "./types";
 import type { StaffRole } from "./types";
 
-// Roles that see the medication alert bell in the navbar
+// Roles
 const MED_ALERT_ROLES: StaffRole[] = ["nurse", "intern_doctor"];
-
-interface LayoutProps {
-  children: React.ReactNode;
-  currentPageName: string;
-}
-
-// Roles that can access Emergency Prescription
 const EMERGENCY_RX_ROLES: StaffRole[] = [
   "consultant_doctor",
   "medical_officer",
@@ -72,21 +67,129 @@ const BED_ROLES: StaffRole[] = [
 ];
 const STAFF_MGMT_ROLES: StaffRole[] = ["admin", "consultant_doctor"];
 
-// ── Sidebar collapse state helpers ───────────────────────────────────────────
+interface LayoutProps {
+  children: React.ReactNode;
+  currentPageName: string;
+}
 
-function loadSidebarState(key: string, defaultVal: boolean): boolean {
+// ── Storage helpers ────────────────────────────────────────────────────────────
+function loadBool(key: string, def: boolean): boolean {
   try {
-    const val = localStorage.getItem(key);
-    if (val === null) return defaultVal;
-    return val === "true";
+    const v = localStorage.getItem(key);
+    if (v === null) return def;
+    return v === "true";
   } catch {
-    return defaultVal;
+    return def;
   }
 }
-function saveSidebarState(key: string, val: boolean) {
+function saveBool(key: string, val: boolean) {
   try {
     localStorage.setItem(key, String(val));
   } catch {}
+}
+
+// ── Badge helpers ──────────────────────────────────────────────────────────────
+function getPendingApprovalCount(): number {
+  try {
+    const registry = JSON.parse(
+      localStorage.getItem("registry") ?? "[]",
+    ) as Array<{ approvalStatus?: string; status?: string }>;
+    const patientRegistry = JSON.parse(
+      localStorage.getItem("patient_registry") ?? "[]",
+    ) as Array<{ approvalStatus?: string; status?: string }>;
+    const staffPending = registry.filter(
+      (a) => a.approvalStatus === "pending" || a.status === "pending",
+    ).length;
+    const patientPending = patientRegistry.filter(
+      (a) => a.approvalStatus === "pending" || a.status === "pending",
+    ).length;
+    return staffPending + patientPending;
+  } catch {
+    return 0;
+  }
+}
+
+function getUnpaidInvoicesCount(): number {
+  try {
+    const keys = [
+      "appointment_payments",
+      "investigation_payments",
+      "procedure_payments",
+      "other_payments",
+    ];
+    let total = 0;
+    for (const key of keys) {
+      const items = JSON.parse(localStorage.getItem(key) ?? "[]") as Array<{
+        status?: string;
+      }>;
+      total += items.filter(
+        (i) => i.status === "unpaid" || i.status === "pending",
+      ).length;
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
+function getPendingHandoverCount(): number {
+  try {
+    const handovers = JSON.parse(
+      localStorage.getItem("handovers") ?? "[]",
+    ) as Array<{ acknowledged?: boolean; acknowledgmentStatus?: string }>;
+    return handovers.filter(
+      (h) => h.acknowledged === false || h.acknowledgmentStatus === "pending",
+    ).length;
+  } catch {
+    return 0;
+  }
+}
+
+function getAdmittedPatientCount(): number {
+  try {
+    // Try direct patients key first
+    const direct = JSON.parse(
+      localStorage.getItem("patients") ?? "[]",
+    ) as Array<{ isAdmitted?: boolean; patientType?: string; status?: string }>;
+    if (direct.length > 0) {
+      return direct.filter(
+        (p) =>
+          p.isAdmitted === true ||
+          p.patientType === "admitted" ||
+          p.status === "Admitted",
+      ).length;
+    }
+    // Fallback: scan patients_* keys
+    let count = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k?.startsWith("patients_")) continue;
+      const arr = JSON.parse(localStorage.getItem(k) ?? "[]") as Array<{
+        isAdmitted?: boolean;
+        patientType?: string;
+        status?: string;
+      }>;
+      count += arr.filter(
+        (p) =>
+          p.isAdmitted === true ||
+          p.patientType === "admitted" ||
+          p.status === "Admitted",
+      ).length;
+    }
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
+// ── NavBadge component ─────────────────────────────────────────────────────────
+function NavBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span className="ml-auto min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 leading-none shrink-0">
+      {count > 99 ? "99+" : count}
+    </span>
+  );
 }
 
 export default function Layout({ children, currentPageName }: LayoutProps) {
@@ -96,13 +199,24 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
   const [conflictCount, setConflictCount] = useState(0);
   const [dueMedCount, setDueMedCount] = useState(0);
 
-  // Hospital Management group expanded state (default: open)
+  // Notification badge counts
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
+  const [unpaidInvoicesCount, setUnpaidInvoicesCount] = useState(0);
+  const [pendingHandoverCount, setPendingHandoverCount] = useState(0);
+  const [admittedPatientCount, setAdmittedPatientCount] = useState(0);
+
+  // Hospital Management group — lazy init from localStorage
   const [hospitalGroupOpen, setHospitalGroupOpen] = useState(() =>
-    loadSidebarState("sidebar_hospital_group_open", true),
+    loadBool("sidebar_hospital_group_open", true),
   );
-  // Payment sub-group expanded state (default: open)
+  // Payment sub-group — lazy init from localStorage
   const [paymentGroupOpen, setPaymentGroupOpen] = useState(() =>
-    loadSidebarState("sidebar_payment_group_open", true),
+    loadBool("sidebar_payment_group_open", true),
+  );
+
+  // Mobile sidebar — icon-only by default, expand to full
+  const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(() =>
+    loadBool("mobile_sidebar_expanded", false),
   );
 
   const syncPopoverRef = useRef<HTMLDivElement>(null);
@@ -123,14 +237,43 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
   const toggleHospitalGroup = () => {
     const next = !hospitalGroupOpen;
     setHospitalGroupOpen(next);
-    saveSidebarState("sidebar_hospital_group_open", next);
+    saveBool("sidebar_hospital_group_open", next);
   };
-
   const togglePaymentGroup = () => {
     const next = !paymentGroupOpen;
     setPaymentGroupOpen(next);
-    saveSidebarState("sidebar_payment_group_open", next);
+    saveBool("sidebar_payment_group_open", next);
   };
+  const toggleMobileSidebar = () => {
+    const next = !mobileSidebarExpanded;
+    setMobileSidebarExpanded(next);
+    saveBool("mobile_sidebar_expanded", next);
+  };
+
+  // Refresh badge counts every 10s
+  useEffect(() => {
+    const refresh = () => {
+      setPendingApprovalCount(getPendingApprovalCount());
+      setUnpaidInvoicesCount(getUnpaidInvoicesCount());
+      setPendingHandoverCount(getPendingHandoverCount());
+      setAdmittedPatientCount(getAdmittedPatientCount());
+    };
+    refresh();
+    const iv = setInterval(refresh, 10000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Also refresh on route change (pathname dep is intentional)
+  useEffect(() => {
+    const _p = pathname; // reference pathname to satisfy linter intent
+    void _p;
+    setPendingApprovalCount(getPendingApprovalCount());
+    setUnpaidInvoicesCount(getUnpaidInvoicesCount());
+    setPendingHandoverCount(getPendingHandoverCount());
+    setAdmittedPatientCount(getAdmittedPatientCount());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   // Poll conflict count every 5 seconds
   useEffect(() => {
@@ -186,7 +329,6 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
             const [hh] = t.split(":").map(Number);
             if (Math.abs(hh - nowHour) <= 1) {
               const records: Array<{
-                drugName?: string;
                 scheduledTime?: string;
                 status?: string;
               }> = (() => {
@@ -245,7 +387,16 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
     return currentPageName === name || pathname === `/${name}`;
   };
 
-  // Last sync time display
+  // Is any Hospital Management child active?
+  const isHospitalGroupActive =
+    isActive("BedManagement") ||
+    isActive("AppointmentPayment") ||
+    isActive("InvestigationPayment") ||
+    isActive("ProcedurePayment") ||
+    isActive("TotalIncome") ||
+    isActive("OtherPayment") ||
+    isActive("Staff");
+
   const lastSyncLabel = (() => {
     if (!syncStatus.lastSyncAt) return "Never synced";
     const diffMs = Date.now() - syncStatus.lastSyncAt.getTime();
@@ -265,16 +416,15 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
   })();
 
   const syncIndicator = (() => {
-    if (!isOnline) {
+    if (!isOnline)
       return {
         color: "bg-amber-500",
         label: `Offline (${syncStatus.pendingChanges} pending)`,
-        tooltip: `Offline — ${syncStatus.pendingChanges} item(s) pending sync. Will sync when reconnected.`,
+        tooltip: `Offline — ${syncStatus.pendingChanges} item(s) pending sync.`,
         icon: <WifiOff className="w-3 h-3" />,
         badgeClass: "bg-amber-100 text-amber-700 border-amber-200",
       };
-    }
-    if (syncStatus.pendingChanges > 0) {
+    if (syncStatus.pendingChanges > 0)
       return {
         color: "bg-yellow-400 animate-pulse",
         label: `Syncing... (${syncStatus.pendingChanges} pending)`,
@@ -282,7 +432,6 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
         icon: <RefreshCw className="w-3 h-3 animate-spin" />,
         badgeClass: "bg-yellow-100 text-yellow-700 border-yellow-200",
       };
-    }
     return {
       color: "bg-green-500",
       label: "All synced",
@@ -307,14 +456,21 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
     return () => document.removeEventListener("mousedown", handler);
   }, [showSyncPopover]);
 
-  // ── Desktop nav items (flat list for header, first 4 items only) ─────────────
+  // Desktop nav items (flat list for header)
   const flatNavItems = [
-    { name: "Dashboard", href: "/Dashboard", icon: LayoutDashboard },
-    { name: "Patients", href: "/Patients", icon: Users },
-    { name: "Appointments", href: "/Appointments", icon: CalendarDays },
-    ...(canStaffMgmt
-      ? [{ name: "Staff", href: "/Staff", icon: UserCircle, label: "Staff" }]
-      : []),
+    {
+      name: "Dashboard",
+      href: "/Dashboard",
+      icon: LayoutDashboard,
+      label: "Dashboard",
+    },
+    { name: "Patients", href: "/Patients", icon: Users, label: "Patient" },
+    {
+      name: "Appointments",
+      href: "/Appointments",
+      icon: CalendarDays,
+      label: "Appointment",
+    },
     ...(canEmergencyRx
       ? [
           {
@@ -353,11 +509,21 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
       : []),
   ];
 
-  // ── Mobile bottom nav (4 most important) ─────────────────────────────────────
+  // Mobile bottom nav (4 most important)
   const mobileNavItems = [
-    { name: "Dashboard", href: "/Dashboard", icon: LayoutDashboard },
-    { name: "Patients", href: "/Patients", icon: Users },
-    { name: "Appointments", href: "/Appointments", icon: CalendarDays },
+    {
+      name: "Dashboard",
+      href: "/Dashboard",
+      icon: LayoutDashboard,
+      label: "Dashboard",
+    },
+    { name: "Patients", href: "/Patients", icon: Users, label: "Patient" },
+    {
+      name: "Appointments",
+      href: "/Appointments",
+      icon: CalendarDays,
+      label: "Appointment",
+    },
     ...(canEmergencyRx
       ? [
           {
@@ -377,7 +543,7 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
         ]),
   ].slice(0, 4);
 
-  // ── Payment sub-items ─────────────────────────────────────────────────────────
+  // Payment sub-items
   const paymentItems = [
     {
       name: "AppointmentPayment",
@@ -411,8 +577,19 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
     },
   ];
 
+  // Ward round disabled when no admitted patients
+  const wardRoundDisabled = admittedPatientCount === 0;
+
+  // Close mobile sidebar when navigating
+  const closeMobileSidebar = () => {
+    if (mobileSidebarExpanded) {
+      setMobileSidebarExpanded(false);
+      saveBool("mobile_sidebar_expanded", false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-background flex flex-col pb-16 md:pb-0">
+    <div className="min-h-screen bg-background flex flex-col">
       {/* Offline Banner */}
       {!isOnline && (
         <div className="bg-amber-500 text-white text-center text-sm py-2 px-4 flex items-center justify-center gap-2 sticky top-0 z-[60]">
@@ -458,10 +635,9 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
               </div>
             </Link>
 
-            {/* Desktop nav (flat, no Hospital Management group in header) */}
+            {/* Desktop nav */}
             <nav className="hidden md:flex items-center gap-1">
-              {flatNavItems.slice(0, 5).map((item) => {
-                const label = (item as { label?: string }).label || item.name;
+              {flatNavItems.map((item) => {
                 return (
                   <Link
                     key={item.name}
@@ -478,7 +654,7 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
                       )}
                     >
                       <item.icon className="w-4 h-4" />
-                      {label}
+                      {item.label}
                     </Button>
                   </Link>
                 );
@@ -509,7 +685,7 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
                   type="button"
                   onClick={() => setShowConflictDialog(true)}
                   className="flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full border bg-red-100 text-red-700 border-red-200 hover:bg-red-200 transition-colors animate-pulse"
-                  title={`${conflictCount} sync conflict${conflictCount > 1 ? "s" : ""} — click to resolve`}
+                  title={`${conflictCount} sync conflict${conflictCount > 1 ? "s" : ""}`}
                   data-ocid="nav.sync_conflict_badge"
                 >
                   <AlertTriangle className="w-3 h-3" />
@@ -593,6 +769,7 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
                 )}
               </div>
 
+              {/* Mobile hamburger (for overlay menu) */}
               <Button
                 variant="ghost"
                 size="icon"
@@ -610,19 +787,18 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
           </div>
         </div>
 
-        {/* Mobile menu (full navigation with Hospital Management group) */}
+        {/* Mobile overlay menu */}
         {mobileMenuOpen && (
           <div className="md:hidden border-t border-border bg-card">
             <nav className="p-3 space-y-1 max-h-[80vh] overflow-y-auto">
-              {/* Dashboard */}
               <MobileNavLink
                 name="Dashboard"
                 href="/Dashboard"
                 icon={LayoutDashboard}
+                label="Dashboard"
                 isActive={isActive}
                 onClose={() => setMobileMenuOpen(false)}
               />
-              {/* Patient */}
               <MobileNavLink
                 name="Patients"
                 href="/Patients"
@@ -630,12 +806,13 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
                 label="Patient"
                 isActive={isActive}
                 onClose={() => setMobileMenuOpen(false)}
+                badge={pendingApprovalCount}
               />
-              {/* Appointments */}
               <MobileNavLink
                 name="Appointments"
                 href="/Appointments"
                 icon={CalendarDays}
+                label="Appointment"
                 isActive={isActive}
                 onClose={() => setMobileMenuOpen(false)}
               />
@@ -646,22 +823,31 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
                   <button
                     type="button"
                     onClick={toggleHospitalGroup}
-                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-colors border-l-4",
+                      isHospitalGroupActive
+                        ? "bg-primary/10 text-primary border-primary"
+                        : "text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/50",
+                    )}
                     data-ocid="nav.hospital_management.toggle"
                   >
-                    <Hospital className="w-4 h-4 text-primary/70" />
+                    <Hospital className="w-4 h-4" />
                     <span className="flex-1 text-left">
                       Hospital Management
                     </span>
+                    {unpaidInvoicesCount > 0 && (
+                      <span className="min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+                        {unpaidInvoicesCount > 99 ? "99+" : unpaidInvoicesCount}
+                      </span>
+                    )}
                     {hospitalGroupOpen ? (
-                      <ChevronDown className="w-4 h-4" />
+                      <ChevronDown className="w-4 h-4 shrink-0" />
                     ) : (
-                      <ChevronRight className="w-4 h-4" />
+                      <ChevronRight className="w-4 h-4 shrink-0" />
                     )}
                   </button>
                   {hospitalGroupOpen && (
                     <div className="ml-4 mt-1 space-y-1 border-l border-border pl-3">
-                      {/* Bed Management */}
                       <MobileNavLink
                         name="BedManagement"
                         href="/BedManagement"
@@ -703,21 +889,22 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
                           ))}
                         </div>
                       )}
+
+                      {/* Staff inside Hospital Management */}
+                      {canStaffMgmt && (
+                        <MobileNavLink
+                          name="Staff"
+                          href="/Staff"
+                          icon={Users}
+                          label="Staff"
+                          isActive={isActive}
+                          onClose={() => setMobileMenuOpen(false)}
+                          indent
+                        />
+                      )}
                     </div>
                   )}
                 </div>
-              )}
-
-              {/* Staff */}
-              {canStaffMgmt && (
-                <MobileNavLink
-                  name="Staff"
-                  href="/Staff"
-                  icon={Users}
-                  label="Staff"
-                  isActive={isActive}
-                  onClose={() => setMobileMenuOpen(false)}
-                />
               )}
 
               {/* Emergency Rx */}
@@ -741,10 +928,12 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
                   label="Ward Round"
                   isActive={isActive}
                   onClose={() => setMobileMenuOpen(false)}
+                  disabled={wardRoundDisabled}
+                  disabledTitle="No admitted patients currently"
+                  badge={pendingHandoverCount}
                 />
               )}
 
-              {/* Settings */}
               <MobileNavLink
                 name="Settings"
                 href="/Settings"
@@ -753,8 +942,6 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
                 isActive={isActive}
                 onClose={() => setMobileMenuOpen(false)}
               />
-
-              {/* Audit Log */}
               {isAdmin && (
                 <MobileNavLink
                   name="AuditLog"
@@ -770,23 +957,255 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
         )}
       </header>
 
-      <main className="flex-1">{children}</main>
+      {/* ── Mobile Left Sidebar (icon-only default, expandable) ─────────────────── */}
+      {/* Only visible on mobile (<md), fixed left panel */}
+      <div
+        className={cn(
+          "md:hidden fixed left-0 top-[64px] bottom-[56px] z-40 flex flex-col bg-card border-r border-border transition-all duration-200 overflow-hidden",
+          mobileSidebarExpanded ? "w-56" : "w-14",
+        )}
+      >
+        {/* Toggle button */}
+        <button
+          type="button"
+          onClick={toggleMobileSidebar}
+          className="h-11 flex items-center justify-center border-b border-border text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors shrink-0"
+          title={mobileSidebarExpanded ? "Collapse sidebar" : "Expand sidebar"}
+          data-ocid="nav.mobile_sidebar_toggle"
+        >
+          {mobileSidebarExpanded ? (
+            <PanelLeftClose className="w-5 h-5" />
+          ) : (
+            <PanelLeftOpen className="w-5 h-5" />
+          )}
+        </button>
 
-      <footer className="hidden md:block border-t border-border bg-card">
-        <div className="max-w-6xl mx-auto px-6 py-3">
-          <p className="text-xs text-muted-foreground text-center">
-            © {new Date().getFullYear()}. Built with ❤ using{" "}
-            <a
-              href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-primary transition-colors"
-            >
-              caffeine.ai
-            </a>
-          </p>
-        </div>
-      </footer>
+        {/* Nav items */}
+        <nav className="flex-1 overflow-y-auto py-2 space-y-0.5">
+          {/* Dashboard */}
+          <SidebarIconItem
+            name="Dashboard"
+            href="/Dashboard"
+            icon={LayoutDashboard}
+            label="Dashboard"
+            isActive={isActive}
+            expanded={mobileSidebarExpanded}
+            onNavigate={closeMobileSidebar}
+          />
+
+          {/* Patient */}
+          <SidebarIconItem
+            name="Patients"
+            href="/Patients"
+            icon={Users}
+            label="Patient"
+            isActive={isActive}
+            expanded={mobileSidebarExpanded}
+            onNavigate={closeMobileSidebar}
+            badge={pendingApprovalCount}
+          />
+
+          {/* Appointments */}
+          <SidebarIconItem
+            name="Appointments"
+            href="/Appointments"
+            icon={CalendarDays}
+            label="Appointment"
+            isActive={isActive}
+            expanded={mobileSidebarExpanded}
+            onNavigate={closeMobileSidebar}
+          />
+
+          {/* Hospital Management group */}
+          {canBedManagement && (
+            <div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!mobileSidebarExpanded) {
+                    setMobileSidebarExpanded(true);
+                    saveBool("mobile_sidebar_expanded", true);
+                  }
+                  toggleHospitalGroup();
+                }}
+                title="Hospital Management"
+                data-ocid="nav.hospital_management.toggle"
+                className={cn(
+                  "w-full flex items-center gap-3 px-3 py-2 text-sm font-semibold transition-colors border-l-4",
+                  isHospitalGroupActive
+                    ? "bg-primary/10 text-primary border-primary"
+                    : "text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/40",
+                )}
+              >
+                <Hospital className="w-5 h-5 shrink-0" />
+                {mobileSidebarExpanded && (
+                  <>
+                    <span className="flex-1 text-left truncate">
+                      Hospital Mgmt
+                    </span>
+                    {unpaidInvoicesCount > 0 && (
+                      <NavBadge count={unpaidInvoicesCount} />
+                    )}
+                    {hospitalGroupOpen ? (
+                      <ChevronDown className="w-4 h-4 shrink-0" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 shrink-0" />
+                    )}
+                  </>
+                )}
+                {!mobileSidebarExpanded && unpaidInvoicesCount > 0 && (
+                  <span className="absolute left-7 top-1 min-w-[14px] h-[14px] bg-red-500 rounded-full text-[9px] text-white flex items-center justify-center px-0.5">
+                    {unpaidInvoicesCount > 9 ? "9+" : unpaidInvoicesCount}
+                  </span>
+                )}
+              </button>
+
+              {mobileSidebarExpanded && hospitalGroupOpen && (
+                <div className="ml-3 border-l border-border pl-2 space-y-0.5 mt-0.5">
+                  <SidebarIconItem
+                    name="BedManagement"
+                    href="/BedManagement"
+                    icon={Bed}
+                    label="Bed Management"
+                    isActive={isActive}
+                    expanded={true}
+                    onNavigate={closeMobileSidebar}
+                    indent
+                  />
+
+                  {/* Payment sub-group */}
+                  <button
+                    type="button"
+                    onClick={togglePaymentGroup}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                    data-ocid="nav.payment_group.toggle"
+                  >
+                    <DollarSign className="w-4 h-4 text-emerald-600/70 shrink-0" />
+                    <span className="flex-1 text-left">Payment</span>
+                    {paymentGroupOpen ? (
+                      <ChevronDown className="w-3 h-3" />
+                    ) : (
+                      <ChevronRight className="w-3 h-3" />
+                    )}
+                  </button>
+                  {paymentGroupOpen && (
+                    <div className="ml-3 border-l border-border pl-2 space-y-0.5">
+                      {paymentItems.map((item) => (
+                        <SidebarIconItem
+                          key={item.name}
+                          name={item.name}
+                          href={item.href}
+                          icon={item.icon}
+                          label={item.label}
+                          isActive={isActive}
+                          expanded={true}
+                          onNavigate={closeMobileSidebar}
+                          indent
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Staff inside Hospital Management */}
+                  {canStaffMgmt && (
+                    <SidebarIconItem
+                      name="Staff"
+                      href="/Staff"
+                      icon={Users}
+                      label="Staff"
+                      isActive={isActive}
+                      expanded={true}
+                      onNavigate={closeMobileSidebar}
+                      indent
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Emergency Rx */}
+          {canEmergencyRx && (
+            <SidebarIconItem
+              name="EmergencyPrescription"
+              href="/EmergencyPrescription"
+              icon={Siren}
+              label="Emergency Rx"
+              isActive={isActive}
+              expanded={mobileSidebarExpanded}
+              onNavigate={closeMobileSidebar}
+            />
+          )}
+
+          {/* Ward Round */}
+          {canWardRound && (
+            <SidebarIconItem
+              name="WardRound"
+              href="/WardRound"
+              icon={Stethoscope}
+              label="Ward Round"
+              isActive={isActive}
+              expanded={mobileSidebarExpanded}
+              onNavigate={closeMobileSidebar}
+              disabled={wardRoundDisabled}
+              disabledTitle="No admitted patients currently"
+              badge={pendingHandoverCount}
+            />
+          )}
+
+          {/* Settings */}
+          <SidebarIconItem
+            name="Settings"
+            href="/Settings"
+            icon={UserCircle}
+            label="Settings"
+            isActive={isActive}
+            expanded={mobileSidebarExpanded}
+            onNavigate={closeMobileSidebar}
+          />
+
+          {/* Audit Log */}
+          {isAdmin && (
+            <SidebarIconItem
+              name="AuditLog"
+              href="/AuditLog"
+              icon={ShieldAlert}
+              label="Audit Log"
+              isActive={isActive}
+              expanded={mobileSidebarExpanded}
+              onNavigate={closeMobileSidebar}
+            />
+          )}
+        </nav>
+      </div>
+
+      {/* Main content — offset on mobile for sidebar */}
+      <div
+        className={cn(
+          "flex-1 flex flex-col transition-all duration-200",
+          // On mobile: offset left by sidebar width, but don't do this on md+
+          "md:ml-0",
+          mobileSidebarExpanded ? "ml-56 md:ml-0" : "ml-14 md:ml-0",
+        )}
+      >
+        <main className="flex-1 pb-16 md:pb-0">{children}</main>
+
+        <footer className="hidden md:block border-t border-border bg-card">
+          <div className="max-w-6xl mx-auto px-6 py-3">
+            <p className="text-xs text-muted-foreground text-center">
+              © {new Date().getFullYear()}. Built with ❤ using{" "}
+              <a
+                href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-primary transition-colors"
+              >
+                caffeine.ai
+              </a>
+            </p>
+          </div>
+        </footer>
+      </div>
 
       {/* Mobile bottom nav */}
       <nav
@@ -795,7 +1214,6 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
       >
         <div className="flex items-stretch h-14">
           {mobileNavItems.map((item) => {
-            const label = (item as { label?: string }).label || item.name;
             return (
               <Link
                 key={item.name}
@@ -810,7 +1228,7 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
               >
                 <item.icon className="w-5 h-5" />
                 <span className="truncate max-w-[60px] text-center">
-                  {label}
+                  {item.label}
                 </span>
               </Link>
             );
@@ -818,7 +1236,7 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
         </div>
       </nav>
 
-      {/* Sync Conflict Resolution Dialog */}
+      {/* Sync Conflict Dialog */}
       <SyncConflictDialog
         open={showConflictDialog}
         onClose={() => setShowConflictDialog(false)}
@@ -828,8 +1246,7 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
   );
 }
 
-// ── Mobile nav link helper ────────────────────────────────────────────────────
-
+// ── MobileNavLink ─────────────────────────────────────────────────────────────
 function MobileNavLink({
   name,
   href,
@@ -838,6 +1255,9 @@ function MobileNavLink({
   isActive,
   onClose,
   indent = false,
+  disabled = false,
+  disabledTitle,
+  badge = 0,
 }: {
   name: string;
   href: string;
@@ -846,8 +1266,29 @@ function MobileNavLink({
   isActive: (name: string) => boolean;
   onClose: () => void;
   indent?: boolean;
+  disabled?: boolean;
+  disabledTitle?: string;
+  badge?: number;
 }) {
   const displayLabel = label || name;
+  const active = isActive(name);
+  if (disabled) {
+    return (
+      <div title={disabledTitle}>
+        <Button
+          variant="ghost"
+          className={cn(
+            "w-full justify-start h-10 gap-3 text-sm opacity-50 cursor-not-allowed border-l-4 border-transparent",
+            indent && "pl-2",
+          )}
+          disabled
+        >
+          <Icon className="w-4 h-4 shrink-0" />
+          {displayLabel}
+        </Button>
+      </div>
+    );
+  }
   return (
     <Link
       to={href as "/Patients"}
@@ -857,16 +1298,92 @@ function MobileNavLink({
       <Button
         variant="ghost"
         className={cn(
-          "w-full justify-start h-10 gap-3 text-sm",
+          "w-full justify-start h-10 gap-3 text-sm transition-colors rounded-lg",
           indent && "pl-2",
-          isActive(name)
-            ? "bg-primary/10 text-primary"
-            : "text-muted-foreground",
+          active
+            ? "bg-primary/10 text-primary border-l-4 border-primary"
+            : "text-muted-foreground border-l-4 border-transparent hover:text-foreground hover:bg-muted/40",
         )}
       >
         <Icon className="w-4 h-4 shrink-0" />
-        {displayLabel}
+        <span className="flex-1 text-left">{displayLabel}</span>
+        {badge > 0 && <NavBadge count={badge} />}
       </Button>
+    </Link>
+  );
+}
+
+// ── SidebarIconItem (mobile left sidebar) ─────────────────────────────────────
+function SidebarIconItem({
+  name,
+  href,
+  icon: Icon,
+  label,
+  isActive,
+  expanded,
+  onNavigate,
+  indent = false,
+  disabled = false,
+  disabledTitle,
+  badge = 0,
+}: {
+  name: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  label?: string;
+  isActive: (name: string) => boolean;
+  expanded: boolean;
+  onNavigate: () => void;
+  indent?: boolean;
+  disabled?: boolean;
+  disabledTitle?: string;
+  badge?: number;
+}) {
+  const displayLabel = label || name;
+  const active = isActive(name);
+
+  if (disabled) {
+    return (
+      <div
+        title={disabledTitle}
+        className={cn(
+          "relative flex items-center gap-3 px-3 py-2 text-sm opacity-50 cursor-not-allowed select-none border-l-4 border-transparent",
+          indent && "px-2",
+        )}
+      >
+        <Icon className="w-5 h-5 shrink-0" />
+        {expanded && <span className="truncate">{displayLabel}</span>}
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      to={href as "/Patients"}
+      onClick={onNavigate}
+      data-ocid={`nav.${name.toLowerCase()}_link`}
+      title={!expanded ? displayLabel : undefined}
+      className={cn(
+        "relative flex items-center gap-3 px-3 py-2 text-sm font-medium transition-colors border-l-4",
+        indent && "px-2",
+        active
+          ? "bg-primary/10 text-primary border-primary"
+          : "text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/40",
+      )}
+    >
+      <Icon className="w-5 h-5 shrink-0" />
+      {expanded && (
+        <>
+          <span className="flex-1 truncate">{displayLabel}</span>
+          {badge > 0 && <NavBadge count={badge} />}
+        </>
+      )}
+      {/* Badge in icon-only mode */}
+      {!expanded && badge > 0 && (
+        <span className="absolute top-1 right-1 min-w-[14px] h-[14px] bg-red-500 rounded-full text-[9px] text-white flex items-center justify-center px-0.5 leading-none">
+          {badge > 9 ? "9+" : badge}
+        </span>
+      )}
     </Link>
   );
 }
