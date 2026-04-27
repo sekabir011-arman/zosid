@@ -15,6 +15,7 @@ import {
   Plus,
   Printer,
   Receipt,
+  RotateCcw,
   Search,
   Stethoscope,
   Trash2,
@@ -24,11 +25,20 @@ import {
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  generateReceiptNumber,
+  InvoiceStateBadge,
+  PartialPaymentFields,
+  PaymentMethodSelector,
+  RefundDialog,
+  generateTypedReceiptNumber,
   loadReceipts,
   saveReceiptToStore,
 } from "../components/MoneyReceipt";
-import type { InvestigationLineItem, MoneyReceiptData } from "../types";
+import type {
+  InvestigationLineItem,
+  MoneyReceiptData,
+  PaymentMethod,
+  RefundRecord,
+} from "../types";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +50,7 @@ interface ProcedureRate {
 
 interface ProcedureReceiptRecord extends MoneyReceiptData {
   procedures?: InvestigationLineItem[];
+  paymentMethod?: PaymentMethod;
 }
 
 // ── Storage helpers ───────────────────────────────────────────────────────────
@@ -232,16 +243,9 @@ function ProcedureReceiptDoc({
         </div>
       </div>
       <div className="text-center mb-5">
-        {receipt.paid ? (
-          <span className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-700 font-bold text-sm px-4 py-1 rounded-full border border-emerald-300">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            PAID / পরিশোধিত
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 bg-amber-100 text-amber-700 font-bold text-sm px-4 py-1 rounded-full border border-amber-300">
-            ⏳ UNPAID / অপরিশোধিত
-          </span>
-        )}
+        <InvoiceStateBadge
+          state={receipt.invoiceState ?? (receipt.paid ? "paid" : "invoice")}
+        />
       </div>
       <div className="flex justify-between items-end mt-6 pt-4 border-t border-gray-300">
         <div className="text-center">
@@ -269,6 +273,58 @@ function ReceiptModal({
   const [receipt, setReceipt] = useState(initialReceipt);
   const printRef = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
+  const [showRefund, setShowRefund] = useState(false);
+  const [isPartial, setIsPartial] = useState(
+    initialReceipt.invoiceState === "partial",
+  );
+  const [amountPaid, setAmountPaid] = useState(
+    initialReceipt.amountPaid ??
+      initialReceipt.finalAmount ??
+      initialReceipt.amount ??
+      0,
+  );
+
+  const totalAmount = receipt.finalAmount ?? receipt.amount ?? 0;
+  const isInvoiceStep = receipt.invoiceState === "invoice";
+  const isRefunded =
+    receipt.invoiceState === "refunded" ||
+    receipt.invoiceState === "partial_refunded";
+
+  function handleMarkPaid() {
+    if (!receipt.paymentMethod) {
+      toast.error("Please select a payment method");
+      return;
+    }
+    const paid = !isPartial;
+    const paidAmt = isPartial ? amountPaid : totalAmount;
+    const dueAmt = isPartial ? totalAmount - amountPaid : 0;
+    const updated: ProcedureReceiptRecord = {
+      ...receipt,
+      paid,
+      amountPaid: paidAmt,
+      dueAmount: dueAmt,
+      invoiceState: isPartial ? "partial" : "paid",
+    };
+    setReceipt(updated);
+    saveProcedureReceipt(updated);
+    toast.success(`Receipt saved — ${updated.receiptNumber}`);
+  }
+
+  function handleRefund(refund: RefundRecord) {
+    const isFullRefund = refund.amount >= totalAmount;
+    const updated: ProcedureReceiptRecord = {
+      ...receipt,
+      paid: false,
+      invoiceState: isFullRefund ? "refunded" : "partial_refunded",
+      refund,
+    };
+    setReceipt(updated);
+    saveProcedureReceipt(updated);
+    setShowRefund(false);
+    toast.success(
+      `Refund of ৳${refund.amount.toLocaleString("en-BD")} recorded`,
+    );
+  }
 
   function handleSave() {
     saveProcedureReceipt(receipt);
@@ -312,6 +368,15 @@ function ReceiptModal({
           .proc-receipt-no-print { display: none !important; }
         }
       `}</style>
+
+      {showRefund && (
+        <RefundDialog
+          maxAmount={receipt.amountPaid ?? totalAmount}
+          onConfirm={handleRefund}
+          onCancel={() => setShowRefund(false)}
+        />
+      )}
+
       <dialog
         open
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 proc-receipt-no-print border-0 max-w-none w-full h-full m-0"
@@ -321,7 +386,7 @@ function ReceiptModal({
           <div className="flex items-center justify-between px-5 py-3 border-b border-border proc-receipt-no-print">
             <h2 className="font-bold text-foreground text-base flex items-center gap-2">
               <Receipt className="w-4 h-4 text-orange-600" />
-              Procedure Receipt
+              {isInvoiceStep ? "Invoice" : "Procedure Receipt"}
             </h2>
             <button
               type="button"
@@ -333,24 +398,37 @@ function ReceiptModal({
             </button>
           </div>
           <div className="overflow-y-auto flex-1 p-5 space-y-4">
-            <div className="flex gap-2 proc-receipt-no-print">
-              <button
-                type="button"
-                onClick={() => setReceipt((r) => ({ ...r, paid: true }))}
-                className={`flex-1 h-9 rounded-lg text-sm font-semibold border transition-colors ${receipt.paid ? "bg-emerald-600 text-white border-emerald-600" : "bg-card text-muted-foreground border-border"}`}
-                data-ocid="proc_receipt.paid_toggle"
-              >
-                ✓ Paid
-              </button>
-              <button
-                type="button"
-                onClick={() => setReceipt((r) => ({ ...r, paid: false }))}
-                className={`flex-1 h-9 rounded-lg text-sm font-semibold border transition-colors ${!receipt.paid ? "bg-amber-500 text-white border-amber-500" : "bg-card text-muted-foreground border-border"}`}
-                data-ocid="proc_receipt.unpaid_toggle"
-              >
-                ⏳ Unpaid
-              </button>
-            </div>
+            {isInvoiceStep && (
+              <div className="space-y-3 proc-receipt-no-print">
+                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-sm text-orange-700">
+                  📄 Review invoice then select payment method and click{" "}
+                  <strong>Mark as Paid</strong>.
+                </div>
+                <PaymentMethodSelector
+                  value={receipt.paymentMethod}
+                  onChange={(v) =>
+                    setReceipt((r) => ({ ...r, paymentMethod: v }))
+                  }
+                  ocidPrefix="proc_receipt"
+                />
+                <PartialPaymentFields
+                  total={totalAmount}
+                  amountPaid={amountPaid}
+                  onAmountPaidChange={setAmountPaid}
+                  isPartial={isPartial}
+                  onIsPartialChange={setIsPartial}
+                  ocidPrefix="proc_receipt"
+                />
+                <Button
+                  className="w-full bg-orange-600 hover:bg-orange-700 text-white gap-2"
+                  onClick={handleMarkPaid}
+                  data-ocid="proc_receipt.mark_paid.button"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  Mark as Paid — Generate Receipt
+                </Button>
+              </div>
+            )}
             <div id="proc-receipt-print-root">
               <ProcedureReceiptDoc
                 receipt={receipt}
@@ -359,13 +437,27 @@ function ReceiptModal({
             </div>
           </div>
           <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-border proc-receipt-no-print">
-            <Button
-              variant="outline"
-              onClick={onClose}
-              data-ocid="proc_receipt.cancel_button"
-            >
-              Close
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={onClose}
+                data-ocid="proc_receipt.cancel_button"
+              >
+                Close
+              </Button>
+              {(receipt.paid || receipt.invoiceState === "partial") &&
+                !isRefunded && (
+                  <Button
+                    variant="outline"
+                    className="gap-1.5 border-rose-300 text-rose-700 hover:bg-rose-50"
+                    onClick={() => setShowRefund(true)}
+                    data-ocid="proc_receipt.refund_button"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    Refund
+                  </Button>
+                )}
+            </div>
             <div className="flex gap-2">
               <Button
                 variant="outline"
@@ -593,7 +685,12 @@ function NewPaymentView({
   );
   const [discountRate, setDiscountRate] = useState(0);
   const [finalOverride, setFinalOverride] = useState("");
-  const [paid, setPaid] = useState(true);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | undefined>(
+    undefined,
+  );
+  const [isPartial, setIsPartial] = useState(false);
+  const [amountPaid, setAmountPaid] = useState(0);
+  const [invoiceStep, setInvoiceStep] = useState<"form" | "invoice">("form");
 
   const checkedRates = rates.filter((r) => selected[r.id]?.checked);
   const subtotal = checkedRates.reduce(
@@ -636,7 +733,7 @@ function NewPaymentView({
       );
   }
 
-  function handleGenerate() {
+  function handleGenerateInvoice() {
     if (!patientName.trim()) {
       toast.error("Patient name is required");
       return;
@@ -645,13 +742,24 @@ function NewPaymentView({
       toast.error("Select at least one procedure");
       return;
     }
+    setInvoiceStep("invoice");
+  }
+
+  function handleMarkPaid() {
+    if (!paymentMethod) {
+      toast.error("Please select a payment method");
+      return;
+    }
     const procedures: InvestigationLineItem[] = checkedRates.map((r) => {
       const qty = selected[r.id]?.qty ?? 1;
       return { name: r.name, qty, unitRate: r.rate, amount: r.rate * qty };
     });
+    const paid = !isPartial;
+    const paidAmt = isPartial ? amountPaid : finalAmount;
+    const dueAmt = isPartial ? finalAmount - amountPaid : 0;
     const receipt: ProcedureReceiptRecord = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2),
-      receiptNumber: generateReceiptNumber(),
+      receiptNumber: generateTypedReceiptNumber("PRO"),
       type: "procedure",
       patientName: patientName.trim(),
       registerNumber,
@@ -661,6 +769,10 @@ function NewPaymentView({
       finalAmount,
       discountRate: effectiveDiscount,
       paid,
+      amountPaid: paidAmt,
+      dueAmount: dueAmt,
+      invoiceState: isPartial ? "partial" : "paid",
+      paymentMethod,
       date: new Date().toISOString(),
       procedures,
     };
@@ -856,34 +968,71 @@ function NewPaymentView({
         </div>
       </div>
 
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={() => setPaid(true)}
-          className={`flex-1 h-9 rounded-lg text-sm font-semibold border transition-colors ${paid ? "bg-emerald-600 text-white border-emerald-600" : "bg-card text-muted-foreground border-border"}`}
-          data-ocid="proc_payment.paid_toggle"
+      {invoiceStep === "invoice" ? (
+        <div className="space-y-3 bg-orange-50 border border-orange-200 rounded-xl p-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-orange-900 text-sm">
+              📄 Invoice Preview
+            </h3>
+            <button
+              type="button"
+              onClick={() => setInvoiceStep("form")}
+              className="text-orange-600 text-xs hover:underline"
+            >
+              ← Edit
+            </button>
+          </div>
+          <div className="ml-auto w-48 space-y-1 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-600">Subtotal</span>
+              <span>৳{subtotal.toLocaleString("en-BD")}</span>
+            </div>
+            {effectiveDiscount > 0 && (
+              <div className="flex justify-between text-emerald-700">
+                <span>Discount ({effectiveDiscount.toFixed(1)}%)</span>
+                <span>
+                  −৳{(subtotal - finalAmount).toLocaleString("en-BD")}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between border-t border-orange-300 pt-1 font-bold text-orange-900 text-base">
+              <span>Total Due</span>
+              <span>৳{finalAmount.toLocaleString("en-BD")}</span>
+            </div>
+          </div>
+          <PaymentMethodSelector
+            value={paymentMethod}
+            onChange={setPaymentMethod}
+            ocidPrefix="proc_payment"
+          />
+          <PartialPaymentFields
+            total={finalAmount}
+            amountPaid={amountPaid}
+            onAmountPaidChange={setAmountPaid}
+            isPartial={isPartial}
+            onIsPartialChange={setIsPartial}
+            ocidPrefix="proc_payment"
+          />
+          <Button
+            className="w-full gap-2 bg-orange-600 hover:bg-orange-700 text-white"
+            onClick={handleMarkPaid}
+            data-ocid="proc_payment.mark_paid.button"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            Mark as Paid — Generate Receipt
+          </Button>
+        </div>
+      ) : (
+        <Button
+          className="w-full gap-2 bg-orange-600 hover:bg-orange-700 text-white"
+          disabled={checkedRates.length === 0 || !patientName.trim()}
+          onClick={handleGenerateInvoice}
+          data-ocid="proc_payment.generate_receipt.button"
         >
-          ✓ Paid
-        </button>
-        <button
-          type="button"
-          onClick={() => setPaid(false)}
-          className={`flex-1 h-9 rounded-lg text-sm font-semibold border transition-colors ${!paid ? "bg-amber-500 text-white border-amber-500" : "bg-card text-muted-foreground border-border"}`}
-          data-ocid="proc_payment.unpaid_toggle"
-        >
-          ⏳ Unpaid
-        </button>
-      </div>
-
-      <Button
-        className="w-full gap-2 bg-orange-600 hover:bg-orange-700 text-white"
-        disabled={checkedRates.length === 0 || !patientName.trim()}
-        onClick={handleGenerate}
-        data-ocid="proc_payment.generate_receipt.button"
-      >
-        <Receipt className="w-4 h-4" />
-        Generate Receipt
-      </Button>
+          <Receipt className="w-4 h-4" />
+          Generate Invoice →
+        </Button>
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 /**
  * OtherPayment — Miscellaneous payment receipts (admission fees, registration fees, etc.)
- * Flexible receipt generation for payments not covered by other categories.
+ * v2: Invoice step, payment method (mandatory), OTH-YYYY-NNNN sequential receipt numbers,
+ *     partial payment, refund action.
  */
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,18 +13,22 @@ import {
   PlusCircle,
   Printer,
   Receipt,
+  RotateCcw,
   Trash2,
   X,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  generateReceiptNumber,
-  loadReceipts,
+  InvoiceStateBadge,
+  PartialPaymentFields,
+  PaymentMethodSelector,
+  RefundDialog,
+  generateTypedReceiptNumber,
   saveReceiptToStore,
 } from "../components/MoneyReceipt";
 import { useEmailAuth } from "../hooks/useEmailAuth";
-import type { MoneyReceiptData } from "../types";
+import type { MoneyReceiptData, PaymentMethod, RefundRecord } from "../types";
 
 const OTHER_PAYMENTS_KEY = "other_payments_index";
 
@@ -38,6 +43,16 @@ interface OtherPaymentRecord {
   finalAmount: number;
   receiptNumber: string;
   notes: string;
+  paymentMethod?: PaymentMethod;
+  amountPaid?: number;
+  dueAmount?: number;
+  invoiceState?:
+    | "invoice"
+    | "paid"
+    | "partial"
+    | "refunded"
+    | "partial_refunded";
+  refund?: RefundRecord;
 }
 
 function loadOtherPayments(): OtherPaymentRecord[] {
@@ -81,6 +96,14 @@ export default function OtherPayment() {
   const [newDesc, setNewDesc] = useState("");
   const [newAmount, setNewAmount] = useState("");
   const [discountPct, setDiscountPct] = useState(0);
+  // Invoice step
+  const [invoiceStep, setInvoiceStep] = useState<"form" | "invoice">("form");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | undefined>(
+    undefined,
+  );
+  const [isPartial, setIsPartial] = useState(false);
+  const [amountPaid, setAmountPaid] = useState(0);
+  // Saved receipt
   const [savedReceipt, setSavedReceipt] = useState<OtherPaymentRecord | null>(
     null,
   );
@@ -100,7 +123,7 @@ export default function OtherPayment() {
   const removeLine = (idx: number) =>
     setLines(lines.filter((_, i) => i !== idx));
 
-  const generateReceipt = () => {
+  function handleGenerateInvoice() {
     if (!patientName.trim()) {
       toast.error("Enter patient name");
       return;
@@ -109,6 +132,17 @@ export default function OtherPayment() {
       toast.error("Add at least one item");
       return;
     }
+    setInvoiceStep("invoice");
+  }
+
+  function handleMarkPaid() {
+    if (!paymentMethod) {
+      toast.error("Please select a payment method");
+      return;
+    }
+    const paid = !isPartial;
+    const paidAmt = isPartial ? amountPaid : finalAmount;
+    const dueAmt = isPartial ? finalAmount - amountPaid : 0;
     const rec: OtherPaymentRecord = {
       id: `other-${Date.now()}`,
       patientName: patientName.trim(),
@@ -118,8 +152,12 @@ export default function OtherPayment() {
       subtotal,
       discountPct,
       finalAmount,
-      receiptNumber: `OTH-${generateReceiptNumber().replace("REC-", "")}`,
+      receiptNumber: generateTypedReceiptNumber("OTH"),
       notes: notes.trim(),
+      paymentMethod,
+      amountPaid: paidAmt,
+      dueAmount: dueAmt,
+      invoiceState: isPartial ? "partial" : "paid",
     };
     saveOtherPayment(rec);
     const unified: MoneyReceiptData = {
@@ -128,12 +166,16 @@ export default function OtherPayment() {
       patientName: rec.patientName,
       registerNumber: rec.registerNumber,
       date: rec.date,
-      type: "procedure",
+      type: "other",
       service: rec.items.map((i) => i.description).join(", "),
       amount: rec.finalAmount,
       discountRate: rec.discountPct,
       finalAmount: rec.finalAmount,
-      paid: true,
+      paid,
+      amountPaid: paidAmt,
+      dueAmount: dueAmt,
+      invoiceState: rec.invoiceState,
+      paymentMethod,
       doctorName: currentDoctor
         ? `${currentDoctor.designation ?? ""} ${currentDoctor.name}`.trim()
         : "",
@@ -142,9 +184,47 @@ export default function OtherPayment() {
     saveReceiptToStore(unified);
     setSavedReceipt(rec);
     toast.success("Receipt generated");
-  };
+  }
 
-  const history = loadOtherPayments();
+  function resetForm() {
+    setPatientName("");
+    setRegisterNumber("");
+    setDate(new Date().toISOString().split("T")[0]);
+    setNotes("");
+    setLines([]);
+    setDiscountPct(0);
+    setInvoiceStep("form");
+    setPaymentMethod(undefined);
+    setIsPartial(false);
+    setAmountPaid(0);
+    setSavedReceipt(null);
+  }
+
+  const [history, setHistory] = useState<OtherPaymentRecord[]>(() =>
+    loadOtherPayments(),
+  );
+  const [showRefund, setShowRefund] = useState<string | null>(null);
+
+  function handleRefund(recordId: string, refund: RefundRecord) {
+    const all = loadOtherPayments();
+    const idx = all.findIndex((r) => r.id === recordId);
+    if (idx < 0) return;
+    const rec = all[idx];
+    const totalAmt = rec.finalAmount;
+    const isFullRefund = refund.amount >= totalAmt;
+    const updated: OtherPaymentRecord = {
+      ...rec,
+      invoiceState: isFullRefund ? "refunded" : "partial_refunded",
+      refund,
+    };
+    all[idx] = updated;
+    localStorage.setItem(OTHER_PAYMENTS_KEY, JSON.stringify(all));
+    setHistory(all);
+    setShowRefund(null);
+    toast.success(
+      `Refund of ৳${refund.amount.toLocaleString("en-BD")} recorded`,
+    );
+  }
 
   return (
     <div
@@ -174,7 +254,8 @@ export default function OtherPayment() {
             type="button"
             onClick={() => {
               setTab(t);
-              setSavedReceipt(null);
+              if (t === "new") resetForm();
+              else setHistory(loadOtherPayments());
             }}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors capitalize ${
               tab === t
@@ -188,8 +269,8 @@ export default function OtherPayment() {
         ))}
       </div>
 
-      {/* New receipt */}
-      {tab === "new" && !savedReceipt && (
+      {/* ── New receipt: form step ── */}
+      {tab === "new" && !savedReceipt && invoiceStep === "form" && (
         <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="sm:col-span-2 space-y-1.5">
@@ -352,7 +433,7 @@ export default function OtherPayment() {
                   </p>
                   {discountPct > 0 && (
                     <p className="text-red-600">
-                      Discount ({discountPct}%): -৳
+                      Discount ({discountPct}%): −৳
                       {discountAmt.toLocaleString()}
                     </p>
                   )}
@@ -362,25 +443,121 @@ export default function OtherPayment() {
                 </div>
               </div>
               <Button
-                onClick={generateReceipt}
+                onClick={handleGenerateInvoice}
                 className="gap-2 bg-amber-600 hover:bg-amber-700"
                 data-ocid="other_payment.submit_button"
               >
-                <Receipt className="w-4 h-4" /> Generate Receipt
+                <Receipt className="w-4 h-4" /> Generate Invoice →
               </Button>
             </div>
           )}
         </div>
       )}
 
-      {/* Receipt preview */}
+      {/* ── New receipt: invoice step ── */}
+      {tab === "new" && !savedReceipt && invoiceStep === "invoice" && (
+        <div className="space-y-4">
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-amber-900 flex items-center gap-2">
+                📄 Invoice Preview
+              </h3>
+              <button
+                type="button"
+                onClick={() => setInvoiceStep("form")}
+                className="text-amber-600 text-xs hover:underline"
+              >
+                ← Edit
+              </button>
+            </div>
+            <div className="text-sm text-amber-800 space-y-1 mb-3">
+              <p>
+                <strong>Patient:</strong> {patientName}
+                {registerNumber && (
+                  <span className="font-mono ml-2">({registerNumber})</span>
+                )}
+              </p>
+            </div>
+            <table className="w-full text-sm border border-amber-200 rounded overflow-hidden">
+              <thead>
+                <tr className="bg-amber-100 text-amber-800">
+                  <th className="text-left px-3 py-2">Description</th>
+                  <th className="text-right px-3 py-2 w-32">Amount (৳)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((l, i) => (
+                  <tr
+                    key={`${l.description}-${i}`}
+                    className="border-t border-amber-100"
+                  >
+                    <td className="px-3 py-2">{l.description}</td>
+                    <td className="px-3 py-2 text-right">
+                      {l.amount.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-amber-50">
+                  <td className="px-3 py-1.5 text-right text-gray-600">
+                    Subtotal
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    ৳{subtotal.toLocaleString()}
+                  </td>
+                </tr>
+                {discountPct > 0 && (
+                  <tr className="text-red-600">
+                    <td className="px-3 py-1.5 text-right">
+                      Discount ({discountPct}%)
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      −৳{discountAmt.toLocaleString()}
+                    </td>
+                  </tr>
+                )}
+                <tr className="bg-amber-100 font-bold text-amber-900">
+                  <td className="px-3 py-2 text-right">Total Due</td>
+                  <td className="px-3 py-2 text-right">
+                    ৳{finalAmount.toLocaleString()}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <PaymentMethodSelector
+            value={paymentMethod}
+            onChange={setPaymentMethod}
+            ocidPrefix="other_payment"
+          />
+          <PartialPaymentFields
+            total={finalAmount}
+            amountPaid={amountPaid}
+            onAmountPaidChange={setAmountPaid}
+            isPartial={isPartial}
+            onIsPartialChange={setIsPartial}
+            ocidPrefix="other_payment"
+          />
+          <Button
+            onClick={handleMarkPaid}
+            className="w-full gap-2 bg-amber-600 hover:bg-amber-700"
+            data-ocid="other_payment.mark_paid.button"
+          >
+            <CheckCircle2 className="w-4 h-4" /> Mark as Paid — Generate Receipt
+          </Button>
+        </div>
+      )}
+
+      {/* ── Receipt preview ── */}
       {tab === "new" && savedReceipt && (
         <div className="space-y-3">
           <div className="flex gap-2">
             <Button
               variant="outline"
               className="gap-2"
-              onClick={() => setSavedReceipt(null)}
+              onClick={resetForm}
               data-ocid="other_payment.cancel_button"
             >
               <X className="w-4 h-4" /> New Receipt
@@ -400,7 +577,7 @@ export default function OtherPayment() {
           >
             <div className="text-center border-b border-gray-200 pb-3">
               <h2 className="font-black text-lg text-gray-900">
-                Dr. Arman Kabir's Care
+                Dr. Arman Kabir&apos;s Care
               </h2>
               <p className="text-xs text-gray-500">
                 Miscellaneous Payment Receipt
@@ -424,6 +601,21 @@ export default function OtherPayment() {
                 <span className="text-gray-500">Receipt:</span>{" "}
                 <span className="font-mono">{savedReceipt.receiptNumber}</span>
               </div>
+              {savedReceipt.paymentMethod && (
+                <div>
+                  <span className="text-gray-500">Payment:</span>{" "}
+                  <span className="font-medium">
+                    {
+                      {
+                        cash: "Cash",
+                        bkash: "bKash",
+                        nagad: "Nagad",
+                        card: "Card",
+                      }[savedReceipt.paymentMethod]
+                    }
+                  </span>
+                </div>
+              )}
             </div>
             <table className="w-full text-sm border-collapse">
               <thead>
@@ -466,13 +658,33 @@ export default function OtherPayment() {
                       Discount ({savedReceipt.discountPct}%)
                     </td>
                     <td className="border border-gray-200 px-3 py-1.5 text-right">
-                      -৳
+                      −৳
                       {(
                         (savedReceipt.subtotal * savedReceipt.discountPct) /
                         100
                       ).toLocaleString()}
                     </td>
                   </tr>
+                )}
+                {savedReceipt.invoiceState === "partial" && (
+                  <>
+                    <tr className="text-emerald-700">
+                      <td className="border border-gray-200 px-3 py-1.5 text-right">
+                        Amount Paid
+                      </td>
+                      <td className="border border-gray-200 px-3 py-1.5 text-right">
+                        ৳{(savedReceipt.amountPaid ?? 0).toLocaleString()}
+                      </td>
+                    </tr>
+                    <tr className="text-amber-700 font-bold">
+                      <td className="border border-gray-200 px-3 py-1.5 text-right">
+                        Balance Due
+                      </td>
+                      <td className="border border-gray-200 px-3 py-1.5 text-right">
+                        ৳{(savedReceipt.dueAmount ?? 0).toLocaleString()}
+                      </td>
+                    </tr>
+                  </>
                 )}
                 <tr className="bg-amber-50 font-bold">
                   <td className="border border-gray-200 px-3 py-2 text-right">
@@ -490,16 +702,13 @@ export default function OtherPayment() {
               </p>
             )}
             <div className="flex justify-center pt-2">
-              <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-4 py-1 rounded-full border border-emerald-200">
-                <CheckCircle2 className="w-3 h-3 inline mr-1" />
-                PAID
-              </span>
+              <InvoiceStateBadge state={savedReceipt.invoiceState ?? "paid"} />
             </div>
           </div>
         </div>
       )}
 
-      {/* History */}
+      {/* ── History ── */}
       {tab === "history" && (
         <div className="space-y-3">
           {history.length === 0 ? (
@@ -514,43 +723,104 @@ export default function OtherPayment() {
               </p>
             </div>
           ) : (
-            history.map((r, i) => (
-              <div
-                key={r.id}
-                className="bg-card border border-border rounded-xl p-4 flex items-center justify-between gap-4"
-                data-ocid={`other_payment.item.${i + 1}`}
-              >
-                <div>
-                  <p className="font-semibold text-foreground">
-                    {r.patientName}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {r.receiptNumber} · {r.date}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {r.items.length} item(s)
-                  </p>
-                  {r.notes && (
-                    <p className="text-xs text-muted-foreground italic mt-0.5">
-                      {r.notes}
+            history.map((r, i) => {
+              const isRefunded =
+                r.invoiceState === "refunded" ||
+                r.invoiceState === "partial_refunded";
+              const canRefund =
+                !isRefunded &&
+                (r.invoiceState === "paid" || r.invoiceState === "partial");
+              return (
+                <div
+                  key={r.id}
+                  className="bg-card border border-border rounded-xl p-4 flex items-start justify-between gap-4"
+                  data-ocid={`other_payment.item.${i + 1}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-foreground truncate">
+                      {r.patientName}
                     </p>
-                  )}
+                    <p className="text-xs text-muted-foreground">
+                      {r.receiptNumber} · {r.date}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {r.items.length} item(s)
+                      {r.paymentMethod && (
+                        <span className="ml-2 capitalize">
+                          · {r.paymentMethod}
+                        </span>
+                      )}
+                    </p>
+                    {r.dueAmount && r.dueAmount > 0 && (
+                      <p className="text-xs text-amber-600 font-medium mt-0.5">
+                        Balance Due: ৳{r.dueAmount.toLocaleString()}
+                      </p>
+                    )}
+                    {r.notes && (
+                      <p className="text-xs text-muted-foreground italic mt-0.5">
+                        {r.notes}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="font-bold text-lg text-foreground">
+                      ৳{r.finalAmount.toLocaleString()}
+                    </p>
+                    <div className="mt-1">
+                      {isRefunded ? (
+                        <Badge
+                          variant="outline"
+                          className="bg-rose-50 text-rose-700 border-rose-200 text-xs"
+                        >
+                          Refunded
+                        </Badge>
+                      ) : r.invoiceState === "partial" ? (
+                        <Badge
+                          variant="outline"
+                          className="bg-amber-50 text-amber-700 border-amber-200 text-xs"
+                        >
+                          Partial
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs"
+                        >
+                          <CheckCircle2 className="w-3 h-3 inline mr-1" />
+                          Paid
+                        </Badge>
+                      )}
+                    </div>
+                    {canRefund && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="mt-1 h-7 px-2 text-xs gap-1 border-rose-200 text-rose-700 hover:bg-rose-50"
+                        onClick={() => setShowRefund(r.id)}
+                        data-ocid={`other_payment.refund.${i + 1}`}
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        Refund
+                      </Button>
+                    )}
+                  </div>
                 </div>
-                <div className="text-right">
-                  <p className="font-bold text-lg text-foreground">
-                    ৳{r.finalAmount.toLocaleString()}
-                  </p>
-                  <Badge
-                    variant="outline"
-                    className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs"
-                  >
-                    Paid
-                  </Badge>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
+      )}
+
+      {showRefund && (
+        <RefundDialog
+          maxAmount={
+            history.find((r) => r.id === showRefund)?.amountPaid ??
+            history.find((r) => r.id === showRefund)?.finalAmount ??
+            0
+          }
+          onConfirm={(refund) => handleRefund(showRefund, refund)}
+          onCancel={() => setShowRefund(null)}
+        />
       )}
     </div>
   );

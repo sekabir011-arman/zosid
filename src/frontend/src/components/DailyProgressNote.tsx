@@ -51,6 +51,7 @@ import { STAFF_ROLE_LABELS } from "../types";
 import DrainMonitor from "./DrainMonitor";
 import IOChart from "./IOChart";
 import MoneyReceipt from "./MoneyReceipt";
+import { autoLinkEmergencyRxToInpatientChart } from "./patientDashboardTypes";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type TrendIndicator = "↑ improving" | "↓ worsening" | "= same";
@@ -417,6 +418,34 @@ export default function DailyProgressNote({
     saveNote(doctorEmail, patientId, today, carried);
     setCarriedFrom(yesterday);
   }, [doctorEmail, patientId, today, yesterday]);
+
+  // ── Auto-link emergency Rx drugs when patient is newly admitted ──────────
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only re-run when admissionDate changes (avoid infinite loop)
+  useEffect(() => {
+    if (!admissionDate) return;
+    const admitMs = new Date(admissionDate).getTime();
+    const nowMs = Date.now();
+    const hoursSinceAdmit = (nowMs - admitMs) / (1000 * 3600);
+    // Only attempt auto-link in first 24h after admission
+    if (hoursSinceAdmit > 24) return;
+    const linked = autoLinkEmergencyRxToInpatientChart(
+      patientId,
+      admissionDate,
+      doctorEmail,
+    );
+    if (linked.length > 0) {
+      // Reload the note so the new plan items show up
+      const updated = loadNote(doctorEmail, patientId, today);
+      if (updated) setNote(updated);
+      toast.info(
+        `${linked.length} drug(s) from Emergency Prescription auto-linked to medication chart.`,
+        {
+          description: linked.join(", "),
+          duration: 6000,
+        },
+      );
+    }
+  }, [admissionDate]);
 
   // ── Clinical Course Summary (7+ day admissions) ──────────────────────────
   const admissionDayCount = useMemo(() => {

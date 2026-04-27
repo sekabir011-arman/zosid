@@ -71,6 +71,20 @@ export interface Medication {
   isPrn?: string; // "true" | "false" stored as string for index signature compat
   /** Condition for PRN drug, e.g. "if fever > 38°C" */
   prnCondition?: string;
+  /** IV/IM dose format: 'single' | 'loading-maintenance' | 'infusion' */
+  ivImDoseFormat?: string;
+  /** Loading dose for IV/IM (e.g. "500mg IV") */
+  loadingDose?: string;
+  /** Maintenance dose (e.g. "250mg/6hrs") */
+  maintenanceDose?: string;
+  /** Infusion rate (e.g. "5") */
+  infusionRate?: string;
+  /** Infusion unit: 'mcg/kg/min' | 'mg/hr' */
+  infusionUnit?: string;
+  /** Whether this drug came from an emergency prescription auto-linked to inpatient */
+  fromEmergencyRx?: string;
+  /** Timestamp when auto-linked from emergency Rx */
+  emergencyRxLinkedAt?: string;
   [key: string]: string | undefined;
 }
 
@@ -114,6 +128,8 @@ export interface Patient {
   edd?: string; // Expected delivery date
   lmpDate?: string; // Last menstrual period
   consultantAssignment?: ConsultantAssignment;
+  /** Whether patient has completed full registration (false for emergency quick-reg patients) */
+  registrationComplete?: boolean;
   [key: string]: unknown;
 }
 
@@ -514,7 +530,9 @@ export interface BedRecord {
   bedNumber: string;
   ward: string;
   hospitalName: string;
-  status: "Empty" | "Occupied" | "Maintenance";
+  /** Floor/level within the hospital, e.g. "Ground Floor", "Floor 1", "ICU Level" */
+  floor?: string;
+  status: "Empty" | "Occupied" | "Maintenance" | "Reserved" | "Cleaning";
   patientId?: bigint;
   patientName?: string;
   admissionDate?: bigint;
@@ -627,10 +645,28 @@ export interface InvestigationLineItem {
   amount: number;
 }
 
+export type PaymentMethod = "cash" | "bkash" | "nagad" | "card";
+
+export type InvoiceState =
+  | "invoice"
+  | "paid"
+  | "partial"
+  | "refunded"
+  | "partial_refunded";
+
+export interface RefundRecord {
+  refundId: string;
+  amount: number;
+  reason: "wrong_charge" | "cancellation" | "duplicate_payment" | "other";
+  date: string; // ISO
+  refundedBy?: string;
+  notes?: string;
+}
+
 export interface MoneyReceiptData {
   id: string;
   receiptNumber: string;
-  type: "appointment" | "procedure" | "investigation";
+  type: "appointment" | "procedure" | "investigation" | "other";
   patientName: string;
   registerNumber?: string;
   phone?: string;
@@ -641,11 +677,20 @@ export interface MoneyReceiptData {
   date: string; // ISO string
   notes?: string;
   serialNumber?: number;
-  /** Investigation receipt fields */
+  /** Investigation / procedure receipt fields */
   investigations?: InvestigationLineItem[];
   discountRate?: number; // percentage applied to subtotal
-  finalAmount?: number; // amount after discount (may differ from auto-calc if manually overridden)
+  finalAmount?: number; // amount after discount
   patientId?: string;
+  /** Payment method — required on every receipt */
+  paymentMethod?: PaymentMethod;
+  /** Invoice/payment lifecycle state */
+  invoiceState?: InvoiceState;
+  /** Partial payment tracking */
+  amountPaid?: number;
+  dueAmount?: number;
+  /** Refund details */
+  refund?: RefundRecord;
 }
 
 export interface DrugReminder {
@@ -805,4 +850,31 @@ export interface PrescriptionExtended extends Prescription {
   followUpDate?: number; // Unix timestamp (ms)
   /** Medications with full meta (dispensing, discontinuation) */
   medicationsWithMeta?: MedicationWithMeta[];
+}
+
+// ── Staff Management Types ─────────────────────────────────────────────────────
+
+export type ShiftType = "morning" | "evening" | "night";
+
+export interface StaffShift {
+  id: string;
+  staffId: string;
+  staffName: string;
+  shiftType: ShiftType;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  ward: string;
+  createdBy: string;
+}
+
+export interface AttendanceRecord {
+  id: string;
+  staffId: string;
+  staffName: string;
+  date: string; // YYYY-MM-DD
+  loginTime: string; // HH:MM
+  logoutTime?: string; // HH:MM
+  shiftStatus: "present" | "late" | "absent";
+  manualOverride?: boolean;
+  overrideNote?: string;
 }

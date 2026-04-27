@@ -102,7 +102,7 @@ import {
   analyzeVitalTrends,
   checkVitalAlerts,
 } from "../lib/clinicalIntelligence";
-import type { Prescription, StaffRole, Visit } from "../types";
+import type { Patient, Prescription, StaffRole, Visit } from "../types";
 
 const RX_SKELETON_KEYS = ["rsk1", "rsk2", "rsk3"];
 
@@ -721,15 +721,18 @@ function PrescriptionCard({
 }
 
 export default function PatientProfile() {
-  const search = useSearch({ strict: false }) as { id?: string };
+  const searchParams = useSearch({ strict: false }) as {
+    id?: string;
+    emergencyOnly?: boolean;
+  };
   const navigate = useNavigate();
   const { currentDoctor } = useEmailAuth();
   const { isAdmin } = useAdminAuth();
   const permissions = useRolePermissions();
-  const patientId = search.id
+  const patientId = searchParams.id
     ? (() => {
         try {
-          const s = String(search.id);
+          const s = String(searchParams.id);
           const raw = s.startsWith("__bigint__") ? s.slice(10) : s;
           const cleaned = raw.replace(/[^0-9]/g, "");
           return cleaned ? BigInt(cleaned) : null;
@@ -743,6 +746,21 @@ export default function PatientProfile() {
   const [showVisitForm, setShowVisitForm] = useState(false);
   const [newVisitTemplate, setNewVisitTemplate] = useState<Visit | null>(null);
   const [showRxForm, setShowRxForm] = useState(false);
+  const emergencyOnlyFilter =
+    (searchParams as Record<string, unknown>).emergencyOnly === true;
+  const setEmergencyOnlyFilter = (val: boolean) => {
+    const url = new URL(window.location.href);
+    if (val) {
+      url.searchParams.set("emergencyOnly", "true");
+    } else {
+      url.searchParams.delete("emergencyOnly");
+    }
+    window.history.replaceState(null, "", url.toString());
+    // Force a re-render by triggering a synthetic navigation
+    void navigate({
+      search: (prev: Record<string, unknown>) => prev,
+    } as Parameters<typeof navigate>[0]);
+  };
   const [rxInitialDiagnosis, setRxInitialDiagnosis] = useState<
     string | undefined
   >(undefined);
@@ -2020,12 +2038,62 @@ export default function PatientProfile() {
 
           {/* PRESCRIPTIONS SECTION */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            {/* Incomplete Registration Banner */}
+            {(() => {
+              const isIncomplete =
+                (patient as Patient & { registrationComplete?: boolean })
+                  .registrationComplete === false ||
+                (patientId &&
+                  localStorage.getItem(
+                    `patient_reg_incomplete_${patientId}`,
+                  ) === "true");
+              if (!isIncomplete) return null;
+              return (
+                <div
+                  className="mb-3 bg-yellow-50 border border-yellow-300 rounded-lg px-4 py-3 flex items-center gap-2 text-sm text-yellow-800"
+                  data-ocid="patient_profile.incomplete_registration.panel"
+                >
+                  <AlertCircle className="w-4 h-4 text-yellow-600 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <span className="font-semibold">
+                      Registration incomplete
+                    </span>{" "}
+                    — this patient was added via emergency. Complete their full
+                    registration.
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0 h-7 text-xs border-yellow-400 text-yellow-700 hover:bg-yellow-100"
+                    onClick={() => setShowEditForm(true)}
+                    data-ocid="patient_profile.complete_registration.button"
+                  >
+                    Complete Registration
+                  </Button>
+                </div>
+              );
+            })()}
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-base font-semibold text-gray-700 flex items-center gap-2">
                 <FileText className="w-4 h-4 text-teal-600" />
                 Prescriptions ({prescriptions.length})
               </h2>
               <div className="flex items-center gap-2">
+                {/* Emergency-Only Filter */}
+                <label
+                  className="flex items-center gap-1.5 cursor-pointer select-none"
+                  data-ocid="patient_profile.prescriptions.emergency_filter.toggle"
+                >
+                  <input
+                    type="checkbox"
+                    checked={emergencyOnlyFilter}
+                    onChange={(e) => setEmergencyOnlyFilter(e.target.checked)}
+                    className="rounded border-red-400 text-red-600 focus:ring-red-500"
+                  />
+                  <span className="text-xs font-medium text-red-700">
+                    🚨 Emergency Only
+                  </span>
+                </label>
                 <Button
                   size="sm"
                   variant="outline"
@@ -2099,13 +2167,49 @@ export default function PatientProfile() {
                   .sort((a, b) =>
                     Number(b.prescriptionDate - a.prescriptionDate),
                   )
+                  .filter((rx) => {
+                    if (!emergencyOnlyFilter) return true;
+                    // Check if rx is emergency: look at medications prescriptionType or ext key
+                    const extRaw = localStorage.getItem(
+                      `prescription_ext_${rx.id}`,
+                    );
+                    if (extRaw) {
+                      try {
+                        const ext = JSON.parse(extRaw);
+                        if (ext.prescriptionType === "emergency") return true;
+                      } catch {}
+                    }
+                    return (
+                      rx.medications?.some(
+                        (m) => m.prescriptionType === "emergency",
+                      ) ?? false
+                    );
+                  })
                   .map((rx, idx, arr) => {
                     const prev = arr[idx + 1];
                     const rxExt = rx as Prescription & {
                       viewedByPatientAt?: number;
                     };
+                    // Check if emergency
+                    let isEmergency = false;
+                    try {
+                      const extRaw = localStorage.getItem(
+                        `prescription_ext_${rx.id}`,
+                      );
+                      if (extRaw) {
+                        const ext = JSON.parse(extRaw);
+                        isEmergency = ext.prescriptionType === "emergency";
+                      }
+                    } catch {}
                     return (
                       <div key={rx.id.toString()}>
+                        {isEmergency && (
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className="text-xs bg-red-100 text-red-700 border border-red-200 rounded-full px-2 py-0.5 font-semibold">
+                              🚨 EMERGENCY
+                            </span>
+                          </div>
+                        )}
                         {idx === arr.length - 1 ? (
                           <FirstPrescriptionLabel />
                         ) : (

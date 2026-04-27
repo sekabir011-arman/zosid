@@ -45,6 +45,17 @@ function getAge(dateOfBirth?: bigint): string {
   return `${age}y`;
 }
 
+function isIncompleteRegistration(patientId: bigint | string): boolean {
+  try {
+    return (
+      localStorage.getItem(`patient_reg_incomplete_${String(patientId)}`) ===
+      "true"
+    );
+  } catch {
+    return false;
+  }
+}
+
 function PatientCard({
   patient,
   index,
@@ -62,6 +73,7 @@ function PatientCard({
   const photo = (patient as Record<string, unknown>).photo as
     | string
     | undefined;
+  const incomplete = isIncompleteRegistration(patient.id);
 
   const handleClick = () => {
     navigate({
@@ -120,6 +132,11 @@ function PatientCard({
                 )}
               </div>
               <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+                {incomplete && (
+                  <Badge className="text-xs bg-orange-100 text-orange-800 border border-orange-300 gap-1">
+                    ⚠ Incomplete
+                  </Badge>
+                )}
                 {assignedToCurrentUser && (
                   <Badge className="text-xs bg-purple-100 text-purple-800 border border-purple-300 gap-1">
                     <UserCheck className="w-2.5 h-2.5" />
@@ -180,6 +197,7 @@ function PatientCard({
 export default function Patients() {
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [showIncompleteOnly, setShowIncompleteOnly] = useState(false);
   const { data: patients = [], isLoading } = useGetAllPatients();
   const createMutation = useCreatePatient();
   const permissions = useRolePermissions();
@@ -194,8 +212,8 @@ export default function Patients() {
   const showDueMeds =
     currentDoctor?.role === "nurse" || currentDoctor?.role === "intern_doctor";
 
-  const baseFiltered = patients.filter(
-    (p) =>
+  const baseFiltered = patients.filter((p) => {
+    const matchesSearch =
       p.fullName.toLowerCase().includes(search.toLowerCase()) ||
       (p.nameBn ?? "").includes(search) ||
       (p.phone ?? "").includes(search) ||
@@ -203,8 +221,11 @@ export default function Patients() {
       ((p as Record<string, unknown>).registerNumber ?? "")
         .toString()
         .toLowerCase()
-        .includes(search.toLowerCase()),
-  );
+        .includes(search.toLowerCase());
+    if (!matchesSearch) return false;
+    if (showIncompleteOnly && !isIncompleteRegistration(p.id)) return false;
+    return true;
+  });
 
   const handleCreate = (data: Parameters<typeof createMutation.mutate>[0]) => {
     createMutation.mutate(data, {
@@ -255,16 +276,32 @@ export default function Patients() {
 
       {/* Admitted-only notice removed — all clinical roles can now see all patients */}
 
-      {/* Search */}
-      <div className="relative mb-5">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder="Search by name, register no., phone, or email\u2026"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-          data-ocid="patients.search_input"
-        />
+      {/* Search + Filters */}
+      <div className="flex flex-col sm:flex-row gap-2 mb-5">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by name, register no., phone, or email…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+            data-ocid="patients.search_input"
+          />
+        </div>
+        <label
+          className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap self-center"
+          data-ocid="patients.incomplete_only.toggle"
+        >
+          <input
+            type="checkbox"
+            checked={showIncompleteOnly}
+            onChange={(e) => setShowIncompleteOnly(e.target.checked)}
+            className="rounded border-orange-400 text-orange-600 focus:ring-orange-500"
+          />
+          <span className="text-xs font-medium text-orange-700">
+            ⚠ Show Incomplete Only
+          </span>
+        </label>
       </div>
 
       {/* List */}

@@ -1,16 +1,41 @@
 /**
  * MoneyReceipt — Reusable printable/downloadable money receipt component.
- * Used for Appointment receipts and Procedure receipts.
  * Print: window.print() with CSS @media print
  * PDF: html2canvas → canvas.toDataURL() → download as image
+ *
+ * v2 additions:
+ * - Payment method field (Cash / bKash / Nagad / Card)
+ * - Invoice step (enter charges → invoice → mark paid → receipt)
+ * - Partial payment with Balance Due display
+ * - Refund action on paid receipts
+ * - Per-type sequential receipt numbers (APT / INV / PRO / OTH)
  */
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, Download, Printer, X } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+  Printer,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
-import type { MoneyReceiptData } from "../types";
+import type {
+  InvoiceState,
+  MoneyReceiptData,
+  PaymentMethod,
+  RefundRecord,
+} from "../types";
 
 // ── Storage helpers ───────────────────────────────────────────────────────────
 
@@ -35,12 +60,307 @@ export function saveReceiptToStore(receipt: MoneyReceiptData) {
   localStorage.setItem(RECEIPTS_KEY, JSON.stringify(all));
 }
 
-export function generateReceiptNumber(): string {
+// ── Per-type sequential receipt number generators ─────────────────────────────
+
+type ReceiptPrefix = "APT" | "INV" | "PRO" | "OTH" | "REC";
+
+function getCounterKey(prefix: ReceiptPrefix): string {
+  return `receipt_counter_${prefix.toLowerCase()}`;
+}
+
+function getYearKey(prefix: ReceiptPrefix): string {
+  return `receipt_year_${prefix.toLowerCase()}`;
+}
+
+export function generateTypedReceiptNumber(prefix: ReceiptPrefix): string {
   const year = new Date().getFullYear();
-  const all = loadReceipts();
-  const yearReceipts = all.filter((r) => r.receiptNumber.includes(`${year}`));
-  const next = yearReceipts.length + 1;
-  return `REC-${year}-${String(next).padStart(4, "0")}`;
+  const yearKey = getYearKey(prefix);
+  const counterKey = getCounterKey(prefix);
+
+  const storedYear = Number.parseInt(localStorage.getItem(yearKey) || "0", 10);
+  let count = 1;
+  if (storedYear === year) {
+    count = Number.parseInt(localStorage.getItem(counterKey) || "0", 10) + 1;
+  }
+
+  localStorage.setItem(yearKey, String(year));
+  localStorage.setItem(counterKey, String(count));
+  return `${prefix}-${year}-${String(count).padStart(4, "0")}`;
+}
+
+/** Legacy fallback — generates REC-YYYY-NNNN using master receipts store */
+export function generateReceiptNumber(): string {
+  return generateTypedReceiptNumber("REC");
+}
+
+// ── Payment method label map ──────────────────────────────────────────────────
+
+const PM_LABELS: Record<PaymentMethod, string> = {
+  cash: "Cash",
+  bkash: "bKash",
+  nagad: "Nagad",
+  card: "Card",
+};
+
+// ── Status badge helper ───────────────────────────────────────────────────────
+
+export function InvoiceStateBadge({ state }: { state?: InvoiceState }) {
+  if (!state || state === "paid")
+    return (
+      <span className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-700 font-bold text-sm px-4 py-1 rounded-full border border-emerald-300">
+        <CheckCircle2 className="w-3.5 h-3.5" />
+        PAID / পরিশোধিত
+      </span>
+    );
+  if (state === "invoice")
+    return (
+      <span className="inline-flex items-center gap-1.5 bg-blue-100 text-blue-700 font-bold text-sm px-4 py-1 rounded-full border border-blue-300">
+        📄 INVOICE / চালান
+      </span>
+    );
+  if (state === "partial")
+    return (
+      <span className="inline-flex items-center gap-1.5 bg-amber-100 text-amber-700 font-bold text-sm px-4 py-1 rounded-full border border-amber-300">
+        ⏳ PARTIAL / আংশিক
+      </span>
+    );
+  if (state === "refunded")
+    return (
+      <span className="inline-flex items-center gap-1.5 bg-rose-100 text-rose-700 font-bold text-sm px-4 py-1 rounded-full border border-rose-300">
+        ↩ REFUNDED / ফেরত
+      </span>
+    );
+  if (state === "partial_refunded")
+    return (
+      <span className="inline-flex items-center gap-1.5 bg-orange-100 text-orange-700 font-bold text-sm px-4 py-1 rounded-full border border-orange-300">
+        ↩ PARTIAL REFUND
+      </span>
+    );
+  return null;
+}
+
+// ── Refund Dialog ─────────────────────────────────────────────────────────────
+
+interface RefundDialogProps {
+  maxAmount: number;
+  onConfirm: (refund: RefundRecord) => void;
+  onCancel: () => void;
+}
+
+export function RefundDialog({
+  maxAmount,
+  onConfirm,
+  onCancel,
+}: RefundDialogProps) {
+  const [amount, setAmount] = useState(maxAmount);
+  const [reason, setReason] = useState<RefundRecord["reason"]>("cancellation");
+
+  function handleConfirm() {
+    if (amount <= 0 || amount > maxAmount) {
+      toast.error(`Refund amount must be between ৳1 and ৳${maxAmount}`);
+      return;
+    }
+    onConfirm({
+      refundId: `ref-${Date.now()}`,
+      amount,
+      reason,
+      date: new Date().toISOString(),
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
+      data-ocid="refund.dialog"
+    >
+      <div className="bg-card rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+        <div className="flex items-start justify-between">
+          <h3 className="font-bold text-foreground flex items-center gap-2">
+            <RotateCcw className="w-4 h-4 text-rose-600" />
+            Process Refund
+          </h3>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="text-muted-foreground hover:text-foreground"
+            data-ocid="refund.close_button"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 text-sm text-rose-700">
+          <AlertTriangle className="w-4 h-4 inline mr-1" />
+          Maximum refundable:{" "}
+          <strong>৳{maxAmount.toLocaleString("en-BD")}</strong>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold">Refund Amount (৳)</Label>
+          <Input
+            type="number"
+            min={1}
+            max={maxAmount}
+            value={amount}
+            onChange={(e) => setAmount(Number(e.target.value))}
+            className="text-lg font-bold"
+            data-ocid="refund.amount_input"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold">Reason</Label>
+          <Select
+            value={reason}
+            onValueChange={(v) => setReason(v as RefundRecord["reason"])}
+          >
+            <SelectTrigger data-ocid="refund.reason_select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="wrong_charge">Wrong charge</SelectItem>
+              <SelectItem value="cancellation">Cancellation</SelectItem>
+              <SelectItem value="duplicate_payment">
+                Duplicate payment
+              </SelectItem>
+              <SelectItem value="other">Other</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex gap-2 justify-end pt-1">
+          <Button
+            variant="outline"
+            onClick={onCancel}
+            data-ocid="refund.cancel_button"
+          >
+            Cancel
+          </Button>
+          <Button
+            className="bg-rose-600 hover:bg-rose-700 text-white gap-1.5"
+            onClick={handleConfirm}
+            data-ocid="refund.confirm_button"
+          >
+            <RotateCcw className="w-4 h-4" />
+            Confirm Refund
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Payment Method Selector (reusable) ────────────────────────────────────────
+
+interface PaymentMethodSelectorProps {
+  value: PaymentMethod | undefined;
+  onChange: (v: PaymentMethod) => void;
+  ocidPrefix?: string;
+}
+
+export function PaymentMethodSelector({
+  value,
+  onChange,
+  ocidPrefix = "receipt",
+}: PaymentMethodSelectorProps) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs font-semibold">
+        Payment Method * / পেমেন্ট পদ্ধতি
+      </Label>
+      <Select
+        value={value ?? ""}
+        onValueChange={(v) => onChange(v as PaymentMethod)}
+      >
+        <SelectTrigger
+          className="h-9"
+          data-ocid={`${ocidPrefix}.payment_method.select`}
+        >
+          <SelectValue placeholder="Select method…" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="cash">💵 Cash</SelectItem>
+          <SelectItem value="bkash">📱 bKash</SelectItem>
+          <SelectItem value="nagad">📱 Nagad</SelectItem>
+          <SelectItem value="card">💳 Card</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+// ── Partial Payment fields (reusable) ─────────────────────────────────────────
+
+interface PartialPaymentFieldsProps {
+  total: number;
+  amountPaid: number;
+  onAmountPaidChange: (n: number) => void;
+  isPartial: boolean;
+  onIsPartialChange: (v: boolean) => void;
+  ocidPrefix?: string;
+}
+
+export function PartialPaymentFields({
+  total,
+  amountPaid,
+  onAmountPaidChange,
+  isPartial,
+  onIsPartialChange,
+  ocidPrefix = "receipt",
+}: PartialPaymentFieldsProps) {
+  const due = Math.max(0, total - amountPaid);
+  return (
+    <div className="space-y-3 bg-muted/30 rounded-xl border border-border p-4">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => onIsPartialChange(false)}
+          className={`flex-1 h-9 rounded-lg text-sm font-semibold border transition-colors ${
+            !isPartial
+              ? "bg-emerald-600 text-white border-emerald-600"
+              : "bg-card text-muted-foreground border-border"
+          }`}
+          data-ocid={`${ocidPrefix}.full_payment.toggle`}
+        >
+          ✓ Full Payment
+        </button>
+        <button
+          type="button"
+          onClick={() => onIsPartialChange(true)}
+          className={`flex-1 h-9 rounded-lg text-sm font-semibold border transition-colors ${
+            isPartial
+              ? "bg-amber-500 text-white border-amber-500"
+              : "bg-card text-muted-foreground border-border"
+          }`}
+          data-ocid={`${ocidPrefix}.partial_payment.toggle`}
+        >
+          ⏳ Partial Payment
+        </button>
+      </div>
+      {isPartial && (
+        <div className="grid grid-cols-2 gap-3 pt-1">
+          <div className="space-y-1">
+            <Label className="text-xs">Amount Paid (৳)</Label>
+            <Input
+              type="number"
+              min={0}
+              max={total}
+              value={amountPaid || ""}
+              onChange={(e) =>
+                onAmountPaidChange(
+                  Math.min(total, Math.max(0, Number(e.target.value))),
+                )
+              }
+              className="font-bold"
+              data-ocid={`${ocidPrefix}.amount_paid.input`}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Balance Due (৳)</Label>
+            <div className="h-9 flex items-center px-3 rounded-md border border-amber-300 bg-amber-50 font-bold text-amber-700 tabular-nums">
+              ৳{due.toLocaleString("en-BD")}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Receipt Dialog ────────────────────────────────────────────────────────────
@@ -61,15 +381,43 @@ export default function MoneyReceipt({
     const id =
       initialData.id ||
       Date.now().toString(36) + Math.random().toString(36).slice(2);
-    const receiptNumber = initialData.receiptNumber || generateReceiptNumber();
-    return { ...initialData, id, receiptNumber };
+    const receiptNumber =
+      initialData.receiptNumber || generateTypedReceiptNumber("REC");
+    return {
+      ...initialData,
+      id,
+      receiptNumber,
+      invoiceState: initialData.invoiceState ?? "paid",
+    };
   });
   const printRef = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
+  const [showRefund, setShowRefund] = useState(false);
+  const [isPartial, setIsPartial] = useState(
+    (initialData.amountPaid ?? 0) > 0 &&
+      (initialData.amountPaid ?? 0) <
+        (initialData.finalAmount ?? initialData.amount ?? 0),
+  );
+  const [amountPaid, setAmountPaid] = useState(
+    initialData.amountPaid ?? initialData.amount ?? 0,
+  );
+
+  const totalAmount = data.finalAmount ?? data.amount ?? 0;
 
   function handleSave() {
-    saveReceiptToStore(data);
-    toast.success(`Receipt ${data.receiptNumber} saved`);
+    const finalPaid = !isPartial;
+    const finalAmountPaid = isPartial ? amountPaid : totalAmount;
+    const due = isPartial ? totalAmount - amountPaid : 0;
+    const updated: MoneyReceiptData = {
+      ...data,
+      paid: finalPaid,
+      amountPaid: finalAmountPaid,
+      dueAmount: due,
+      invoiceState: isPartial ? "partial" : "paid",
+    };
+    setData(updated);
+    saveReceiptToStore(updated);
+    toast.success(`Receipt ${updated.receiptNumber} saved`);
   }
 
   function handlePrint() {
@@ -101,20 +449,37 @@ export default function MoneyReceipt({
     }
   }
 
+  function handleRefund(refund: RefundRecord) {
+    const isFullRefund = refund.amount >= totalAmount;
+    const updated: MoneyReceiptData = {
+      ...data,
+      paid: false,
+      invoiceState: isFullRefund ? "refunded" : "partial_refunded",
+      refund,
+    };
+    setData(updated);
+    saveReceiptToStore(updated);
+    setShowRefund(false);
+    toast.success(
+      `Refund of ৳${refund.amount.toLocaleString("en-BD")} recorded`,
+    );
+  }
+
   const isAppointment = data.type === "appointment";
   const titleEn = isAppointment ? "Appointment Receipt" : "Procedure Receipt";
   const titleBn = isAppointment ? "অ্যাপয়েন্টমেন্ট রসিদ" : "পদ্ধতি রসিদ";
   const serviceLabel = isAppointment ? "Service / সেবা" : "Procedure / পদ্ধতি";
-
   const formattedDate = new Date(data.date).toLocaleDateString("en-BD", {
     year: "numeric",
     month: "long",
     day: "numeric",
   });
+  const isRefunded =
+    data.invoiceState === "refunded" ||
+    data.invoiceState === "partial_refunded";
 
   return (
     <>
-      {/* ── Print-only styles injected globally ── */}
       <style>{`
         @media print {
           body > *:not(#receipt-print-root) { display: none !important; }
@@ -123,10 +488,17 @@ export default function MoneyReceipt({
         }
       `}</style>
 
-      {/* ── Modal Overlay ── */}
+      {showRefund && (
+        <RefundDialog
+          maxAmount={isPartial ? amountPaid : totalAmount}
+          onConfirm={handleRefund}
+          onCancel={() => setShowRefund(false)}
+        />
+      )}
+
       <dialog
         open
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 receipt-no-print border-0 max-w-none w-full h-full m-0 p-4"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 receipt-no-print border-0 max-w-none w-full h-full m-0"
         aria-label="Money Receipt"
       >
         <div className="bg-card rounded-2xl shadow-2xl w-full max-w-2xl max-h-[95vh] flex flex-col overflow-hidden">
@@ -144,18 +516,14 @@ export default function MoneyReceipt({
             </button>
           </div>
 
-          {/* Scrollable body */}
-          <div className="overflow-y-auto flex-1 p-5 space-y-5">
-            {/* ── Amount + Status editable fields ── */}
+          <div className="overflow-y-auto flex-1 p-5 space-y-4">
+            {/* Amount + payment method */}
             <div className="grid grid-cols-2 gap-4 receipt-no-print">
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold">
-                  Amount (টাকা / BDT)
-                </Label>
+                <Label className="text-xs font-semibold">Amount (৳)</Label>
                 <Input
                   type="number"
                   min="0"
-                  placeholder="0"
                   value={data.amount || ""}
                   onChange={(e) =>
                     setData((d) => ({ ...d, amount: Number(e.target.value) }))
@@ -164,38 +532,25 @@ export default function MoneyReceipt({
                   data-ocid="receipt.amount_input"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold">
-                  Payment Status / পেমেন্ট
-                </Label>
-                <div className="flex gap-2 mt-1">
-                  <button
-                    type="button"
-                    onClick={() => setData((d) => ({ ...d, paid: true }))}
-                    className={`flex-1 h-9 rounded-lg text-sm font-semibold border transition-colors ${
-                      data.paid
-                        ? "bg-emerald-600 text-white border-emerald-600"
-                        : "bg-card text-muted-foreground border-border hover:border-emerald-400"
-                    }`}
-                    data-ocid="receipt.paid_toggle"
-                  >
-                    ✓ Paid
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setData((d) => ({ ...d, paid: false }))}
-                    className={`flex-1 h-9 rounded-lg text-sm font-semibold border transition-colors ${
-                      !data.paid
-                        ? "bg-amber-500 text-white border-amber-500"
-                        : "bg-card text-muted-foreground border-border hover:border-amber-400"
-                    }`}
-                    data-ocid="receipt.unpaid_toggle"
-                  >
-                    ⏳ Unpaid
-                  </button>
-                </div>
+              <div className="receipt-no-print">
+                <PaymentMethodSelector
+                  value={data.paymentMethod}
+                  onChange={(v) => setData((d) => ({ ...d, paymentMethod: v }))}
+                />
               </div>
             </div>
+
+            {/* Partial payment */}
+            <div className="receipt-no-print">
+              <PartialPaymentFields
+                total={totalAmount}
+                amountPaid={amountPaid}
+                onAmountPaidChange={setAmountPaid}
+                isPartial={isPartial}
+                onIsPartialChange={setIsPartial}
+              />
+            </div>
+
             {data.notes !== undefined && (
               <div className="space-y-1.5 receipt-no-print">
                 <Label className="text-xs font-semibold">
@@ -212,7 +567,7 @@ export default function MoneyReceipt({
               </div>
             )}
 
-            {/* ── Printable receipt document ── */}
+            {/* Printable receipt document */}
             <div id="receipt-print-root">
               <div
                 ref={printRef}
@@ -220,7 +575,7 @@ export default function MoneyReceipt({
                 style={{ fontFamily: "serif", minWidth: 420 }}
               >
                 {/* Watermark */}
-                {data.paid && (
+                {data.paid && !isRefunded && (
                   <div
                     className="absolute inset-0 flex items-center justify-center pointer-events-none"
                     aria-hidden="true"
@@ -238,6 +593,23 @@ export default function MoneyReceipt({
                     </span>
                   </div>
                 )}
+                {isRefunded && (
+                  <div
+                    className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                    aria-hidden="true"
+                  >
+                    <span
+                      className="text-rose-300 font-black select-none"
+                      style={{
+                        fontSize: 80,
+                        transform: "rotate(-35deg)",
+                        opacity: 0.22,
+                      }}
+                    >
+                      REFUNDED
+                    </span>
+                  </div>
+                )}
 
                 {/* Header */}
                 <div className="text-center mb-6 border-b-2 border-gray-800 pb-4">
@@ -250,12 +622,12 @@ export default function MoneyReceipt({
                         Dr. Arman Kabir&apos;s Care
                       </h1>
                       <p className="text-xs text-gray-600">
-                        Patient Management & Clinical Portal
+                        Patient Management &amp; Clinical Portal
                       </p>
                     </div>
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
-                    University Dental College & Hospital, Moghbazar, Dhaka
+                    University Dental College &amp; Hospital, Moghbazar, Dhaka
                   </p>
                 </div>
 
@@ -267,7 +639,7 @@ export default function MoneyReceipt({
                   <p className="text-sm text-gray-500">{titleBn}</p>
                 </div>
 
-                {/* Receipt meta row */}
+                {/* Meta row */}
                 <div className="flex justify-between items-start mb-5 text-xs text-gray-600">
                   <div>
                     <span className="font-semibold">Receipt No: </span>
@@ -301,37 +673,89 @@ export default function MoneyReceipt({
                   />
                   {isAppointment && data.serialNumber !== undefined && (
                     <ReceiptField
-                      label="Serial No. / সিরিয়াল নং"
+                      label="Serial No."
                       value={`#${data.serialNumber}`}
                     />
                   )}
                   <ReceiptField label={serviceLabel} value={data.service} />
+                  {data.paymentMethod && (
+                    <ReceiptField
+                      label="Payment Method / পেমেন্ট"
+                      value={PM_LABELS[data.paymentMethod]}
+                    />
+                  )}
                 </div>
 
                 {/* Amount box */}
-                <div className="border-2 border-gray-800 rounded-lg p-4 mb-5 text-center">
-                  <p className="text-xs uppercase font-semibold text-gray-500 mb-1">
-                    Total Amount / মোট পরিমাণ
-                  </p>
-                  <p className="text-3xl font-black text-gray-900">
-                    ৳{" "}
-                    {data.amount !== undefined && data.amount > 0
-                      ? data.amount.toLocaleString("en-BD")
-                      : "0"}
-                  </p>
-                  <div className="mt-2">
-                    {data.paid ? (
-                      <span className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-700 font-bold text-sm px-4 py-1 rounded-full border border-emerald-300">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        PAID / পরিশোধিত
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 bg-amber-100 text-amber-700 font-bold text-sm px-4 py-1 rounded-full border border-amber-300">
-                        ⏳ UNPAID / অপরিশোধিত
-                      </span>
-                    )}
+                <div className="border-2 border-gray-800 rounded-lg p-4 mb-4">
+                  {isPartial ? (
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm text-gray-600">
+                        <span>Total Billed</span>
+                        <span className="font-semibold">
+                          ৳{totalAmount.toLocaleString("en-BD")}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm text-emerald-700">
+                        <span>Amount Paid</span>
+                        <span className="font-bold">
+                          ৳{amountPaid.toLocaleString("en-BD")}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm text-amber-700 border-t border-gray-300 pt-1 font-bold">
+                        <span>Balance Due</span>
+                        <span>
+                          ৳
+                          {Math.max(0, totalAmount - amountPaid).toLocaleString(
+                            "en-BD",
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center">
+                      <p className="text-xs uppercase font-semibold text-gray-500 mb-1">
+                        Total Amount / মোট পরিমাণ
+                      </p>
+                      <p className="text-3xl font-black text-gray-900">
+                        ৳{" "}
+                        {(data.amount ?? 0) > 0
+                          ? (data.amount ?? 0).toLocaleString("en-BD")
+                          : "0"}
+                      </p>
+                    </div>
+                  )}
+                  <div className="mt-3 text-center">
+                    <InvoiceStateBadge
+                      state={
+                        isPartial
+                          ? "partial"
+                          : isRefunded
+                            ? (data.invoiceState ?? "paid")
+                            : "paid"
+                      }
+                    />
                   </div>
                 </div>
+
+                {/* Refund info */}
+                {data.refund && (
+                  <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 mb-4 text-sm">
+                    <p className="font-semibold text-rose-700 mb-1">
+                      Refund Details
+                    </p>
+                    <div className="text-xs text-gray-600 space-y-0.5">
+                      <p>
+                        Amount: ৳{data.refund.amount.toLocaleString("en-BD")}
+                      </p>
+                      <p>Reason: {data.refund.reason.replace("_", " ")}</p>
+                      <p>
+                        Date:{" "}
+                        {new Date(data.refund.date).toLocaleDateString("en-BD")}
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {/* Notes */}
                 {data.notes && (
@@ -344,36 +768,45 @@ export default function MoneyReceipt({
                 <div className="flex justify-between items-end mt-6 pt-4 border-t border-gray-300">
                   <div className="text-center">
                     <div className="border-b border-gray-500 w-32 mb-1" />
-                    <p className="text-xs text-gray-500">
-                      Patient Signature / রোগীর স্বাক্ষর
-                    </p>
+                    <p className="text-xs text-gray-500">Patient Signature</p>
                   </div>
                   <div className="text-center">
                     <div className="border-b border-gray-500 w-32 mb-1" />
                     <p className="text-xs text-gray-500">
-                      Authorized Signature / অনুমোদিত স্বাক্ষর
+                      Authorized Signature
                     </p>
                   </div>
                 </div>
 
-                {/* Footer */}
                 <p className="text-center text-xs text-gray-400 mt-4">
-                  This is a computer-generated receipt. — Dr. Arman Kabir&apos;s
-                  Care
+                  Computer-generated receipt — Dr. Arman Kabir&apos;s Care
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Modal footer actions */}
+          {/* Modal footer */}
           <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-border receipt-no-print">
-            <Button
-              variant="outline"
-              onClick={onClose}
-              data-ocid="receipt.cancel_button"
-            >
-              Close
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={onClose}
+                data-ocid="receipt.cancel_button"
+              >
+                Close
+              </Button>
+              {(data.paid || isPartial) && !isRefunded && (
+                <Button
+                  variant="outline"
+                  className="gap-1.5 border-rose-300 text-rose-700 hover:bg-rose-50"
+                  onClick={() => setShowRefund(true)}
+                  data-ocid="receipt.refund_button"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  Refund
+                </Button>
+              )}
+            </div>
             <div className="flex gap-2">
               <Button
                 variant="outline"
@@ -470,17 +903,11 @@ export function ReceiptsHistoryList() {
               <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground hidden sm:table-cell">
                 Type
               </th>
-              <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground hidden md:table-cell">
-                Service
-              </th>
               <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">
                 Amount
               </th>
               <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground hidden sm:table-cell">
                 Status
-              </th>
-              <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground hidden md:table-cell">
-                Date
               </th>
               <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">
                 Actions
@@ -512,20 +939,35 @@ export function ReceiptsHistoryList() {
                     className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
                       r.type === "appointment"
                         ? "bg-blue-100 text-blue-700"
-                        : "bg-teal-100 text-teal-700"
+                        : r.type === "investigation"
+                          ? "bg-purple-100 text-purple-700"
+                          : r.type === "other"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-teal-100 text-teal-700"
                     }`}
                   >
-                    {r.type === "appointment" ? "Appointment" : "Procedure"}
+                    {r.type.charAt(0).toUpperCase() + r.type.slice(1)}
                   </span>
                 </td>
-                <td className="px-4 py-3 hidden md:table-cell text-muted-foreground text-xs">
-                  {r.service}
-                </td>
                 <td className="px-4 py-3 text-right font-bold text-foreground">
-                  ৳{(r.amount || 0).toLocaleString("en-BD")}
+                  ৳{(r.finalAmount ?? r.amount ?? 0).toLocaleString("en-BD")}
+                  {(r.dueAmount ?? 0) > 0 && (
+                    <p className="text-xs text-amber-600 font-medium">
+                      Due: ৳{r.dueAmount?.toLocaleString("en-BD")}
+                    </p>
+                  )}
                 </td>
                 <td className="px-4 py-3 hidden sm:table-cell">
-                  {r.paid ? (
+                  {r.invoiceState === "refunded" ||
+                  r.invoiceState === "partial_refunded" ? (
+                    <span className="text-xs font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
+                      Refunded
+                    </span>
+                  ) : r.invoiceState === "partial" ? (
+                    <span className="text-xs font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                      Partial
+                    </span>
+                  ) : r.paid ? (
                     <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
                       Paid
                     </span>
@@ -534,13 +976,6 @@ export function ReceiptsHistoryList() {
                       Unpaid
                     </span>
                   )}
-                </td>
-                <td className="px-4 py-3 text-xs text-muted-foreground hidden md:table-cell">
-                  {new Date(r.date).toLocaleDateString("en-BD", {
-                    year: "numeric",
-                    month: "short",
-                    day: "numeric",
-                  })}
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-end gap-1">

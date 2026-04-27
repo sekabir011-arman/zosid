@@ -34,6 +34,11 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import SyncConflictDialog from "./components/SyncConflictDialog";
+import {
+  type EmergencyNotification,
+  acknowledgeEmergencyNotification,
+  getUnacknowledgedEmergencyNotifications,
+} from "./components/patientDashboardTypes";
 import { useAdminAuth } from "./hooks/useAdminAuth";
 import { useEmailAuth } from "./hooks/useEmailAuth";
 import { useSyncStatus } from "./hooks/useMigration";
@@ -198,6 +203,11 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
   const [showConflictDialog, setShowConflictDialog] = useState(false);
   const [conflictCount, setConflictCount] = useState(0);
   const [dueMedCount, setDueMedCount] = useState(0);
+  // Emergency Rx notifications for nurses
+  const [emergencyNotifs, setEmergencyNotifs] = useState<
+    EmergencyNotification[]
+  >([]);
+  const [showEmergencyAlert, setShowEmergencyAlert] = useState(false);
 
   // Notification badge counts
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
@@ -282,6 +292,20 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
     const iv = setInterval(refresh, 5000);
     return () => clearInterval(iv);
   }, []);
+
+  // Poll emergency notifications for nurses every 15 seconds
+  const isNurse = role === "nurse";
+  useEffect(() => {
+    if (!isNurse) return;
+    const refresh = () => {
+      const notifs = getUnacknowledgedEmergencyNotifications();
+      setEmergencyNotifs(notifs);
+      if (notifs.length > 0) setShowEmergencyAlert(true);
+    };
+    refresh();
+    const iv = setInterval(refresh, 15000);
+    return () => clearInterval(iv);
+  }, [isNurse]);
 
   // Count meds due in the next hour for nurse/intern
   useEffect(() => {
@@ -456,59 +480,6 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
     return () => document.removeEventListener("mousedown", handler);
   }, [showSyncPopover]);
 
-  // Desktop nav items (flat list for header)
-  const flatNavItems = [
-    {
-      name: "Dashboard",
-      href: "/Dashboard",
-      icon: LayoutDashboard,
-      label: "Dashboard",
-    },
-    { name: "Patients", href: "/Patients", icon: Users, label: "Patient" },
-    {
-      name: "Appointments",
-      href: "/Appointments",
-      icon: CalendarDays,
-      label: "Appointment",
-    },
-    ...(canEmergencyRx
-      ? [
-          {
-            name: "EmergencyPrescription",
-            href: "/EmergencyPrescription",
-            icon: Siren,
-            label: "Emergency Rx",
-          },
-        ]
-      : []),
-    ...(canWardRound
-      ? [
-          {
-            name: "WardRound",
-            href: "/WardRound",
-            icon: Stethoscope,
-            label: "Ward Round",
-          },
-        ]
-      : []),
-    {
-      name: "Settings",
-      href: "/Settings",
-      icon: UserCircle,
-      label: "Settings",
-    },
-    ...(isAdmin
-      ? [
-          {
-            name: "AuditLog",
-            href: "/AuditLog",
-            icon: ShieldAlert,
-            label: "Audit Log",
-          },
-        ]
-      : []),
-  ];
-
   // Mobile bottom nav (4 most important)
   const mobileNavItems = [
     {
@@ -590,6 +561,63 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      {/* Emergency Rx Notification Banner for Nurses */}
+      {isNurse && showEmergencyAlert && emergencyNotifs.length > 0 && (
+        <div
+          className="bg-red-600 text-white sticky top-0 z-[70] border-b-2 border-red-700"
+          data-ocid="layout.emergency_notification.toast"
+        >
+          <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Siren className="w-4 h-4 animate-pulse shrink-0" />
+              <span className="font-semibold text-sm">
+                🚨 New Emergency Prescription
+                {emergencyNotifs.length > 1
+                  ? `s (${emergencyNotifs.length})`
+                  : ""}{" "}
+                — {emergencyNotifs[0].patientName} at{" "}
+                {new Date(emergencyNotifs[0].time).toLocaleTimeString("en-BD", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <a
+                href="/EmergencyPrescription"
+                className="text-xs bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full font-medium border border-white/40 transition-colors"
+                data-ocid="layout.emergency_notification.view_link"
+              >
+                View Prescription
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  const doctorEmail = currentDoctor?.email ?? "unknown";
+                  for (const n of emergencyNotifs) {
+                    acknowledgeEmergencyNotification(n.id, doctorEmail);
+                  }
+                  setEmergencyNotifs([]);
+                  setShowEmergencyAlert(false);
+                }}
+                className="text-xs bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full font-medium border border-white/40 transition-colors"
+                data-ocid="layout.emergency_notification.acknowledge_button"
+              >
+                Acknowledge
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowEmergencyAlert(false)}
+                className="text-white/70 hover:text-white"
+                data-ocid="layout.emergency_notification.close_button"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Offline Banner */}
       {!isOnline && (
         <div className="bg-amber-500 text-white text-center text-sm py-2 px-4 flex items-center justify-center gap-2 sticky top-0 z-[60]">
@@ -637,28 +665,171 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
 
             {/* Desktop nav */}
             <nav className="hidden md:flex items-center gap-1">
-              {flatNavItems.map((item) => {
-                return (
-                  <Link
-                    key={item.name}
-                    to={item.href as "/Patients"}
-                    data-ocid={`nav.${item.name.toLowerCase()}_link`}
+              {/* Dashboard */}
+              <Link to="/Dashboard" data-ocid="nav.dashboard_link">
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    "h-9 px-3 text-sm font-medium gap-2",
+                    isActive("Dashboard")
+                      ? "bg-primary/10 text-primary hover:bg-primary/15"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <LayoutDashboard className="w-4 h-4" />
+                  Dashboard
+                </Button>
+              </Link>
+
+              {/* Patient */}
+              <Link to="/Patients" data-ocid="nav.patients_link">
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    "h-9 px-3 text-sm font-medium gap-2",
+                    isActive("Patients")
+                      ? "bg-primary/10 text-primary hover:bg-primary/15"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Users className="w-4 h-4" />
+                  Patient
+                  {pendingApprovalCount > 0 && (
+                    <span className="min-w-[16px] h-[16px] bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5 leading-none">
+                      {pendingApprovalCount > 99 ? "99+" : pendingApprovalCount}
+                    </span>
+                  )}
+                </Button>
+              </Link>
+
+              {/* Appointment */}
+              <Link to="/Appointments" data-ocid="nav.appointments_link">
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    "h-9 px-3 text-sm font-medium gap-2",
+                    isActive("Appointments")
+                      ? "bg-primary/10 text-primary hover:bg-primary/15"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <CalendarDays className="w-4 h-4" />
+                  Appointment
+                </Button>
+              </Link>
+
+              {/* Hospital Management dropdown */}
+              {canBedManagement && (
+                <DesktopHospitalDropdown
+                  isHospitalGroupActive={isHospitalGroupActive}
+                  hospitalGroupOpen={hospitalGroupOpen}
+                  toggleHospitalGroup={toggleHospitalGroup}
+                  paymentGroupOpen={paymentGroupOpen}
+                  togglePaymentGroup={togglePaymentGroup}
+                  paymentItems={paymentItems}
+                  canStaffMgmt={canStaffMgmt}
+                  isActive={isActive}
+                  unpaidInvoicesCount={unpaidInvoicesCount}
+                />
+              )}
+
+              {/* Emergency Rx */}
+              {canEmergencyRx && (
+                <Link
+                  to="/EmergencyPrescription"
+                  data-ocid="nav.emergencyprescription_link"
+                >
+                  <Button
+                    variant="ghost"
+                    className={cn(
+                      "h-9 px-3 text-sm font-medium gap-2",
+                      isActive("EmergencyPrescription")
+                        ? "bg-primary/10 text-primary hover:bg-primary/15"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
                   >
+                    <Siren className="w-4 h-4" />
+                    Emergency Rx
+                  </Button>
+                </Link>
+              )}
+
+              {/* Ward Round */}
+              {canWardRound &&
+                (wardRoundDisabled ? (
+                  <Button
+                    variant="ghost"
+                    disabled
+                    title="No admitted patients currently"
+                    className="h-9 px-3 text-sm font-medium gap-2 opacity-50 cursor-not-allowed"
+                  >
+                    <Stethoscope className="w-4 h-4" />
+                    Ward Round
+                    {pendingHandoverCount > 0 && (
+                      <span className="min-w-[16px] h-[16px] bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5 leading-none">
+                        {pendingHandoverCount > 99
+                          ? "99+"
+                          : pendingHandoverCount}
+                      </span>
+                    )}
+                  </Button>
+                ) : (
+                  <Link to="/WardRound" data-ocid="nav.wardround_link">
                     <Button
                       variant="ghost"
                       className={cn(
                         "h-9 px-3 text-sm font-medium gap-2",
-                        isActive(item.name)
+                        isActive("WardRound")
                           ? "bg-primary/10 text-primary hover:bg-primary/15"
                           : "text-muted-foreground hover:text-foreground",
                       )}
                     >
-                      <item.icon className="w-4 h-4" />
-                      {item.label}
+                      <Stethoscope className="w-4 h-4" />
+                      Ward Round
+                      {pendingHandoverCount > 0 && (
+                        <span className="min-w-[16px] h-[16px] bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5 leading-none">
+                          {pendingHandoverCount > 99
+                            ? "99+"
+                            : pendingHandoverCount}
+                        </span>
+                      )}
                     </Button>
                   </Link>
-                );
-              })}
+                ))}
+
+              {/* Settings */}
+              <Link to="/Settings" data-ocid="nav.settings_link">
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    "h-9 px-3 text-sm font-medium gap-2",
+                    isActive("Settings")
+                      ? "bg-primary/10 text-primary hover:bg-primary/15"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <UserCircle className="w-4 h-4" />
+                  Settings
+                </Button>
+              </Link>
+
+              {/* Audit Log (admin only) */}
+              {isAdmin && (
+                <Link to="/AuditLog" data-ocid="nav.auditlog_link">
+                  <Button
+                    variant="ghost"
+                    className={cn(
+                      "h-9 px-3 text-sm font-medium gap-2",
+                      isActive("AuditLog")
+                        ? "bg-primary/10 text-primary hover:bg-primary/15"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <ShieldAlert className="w-4 h-4" />
+                    Audit Log
+                  </Button>
+                </Link>
+              )}
             </nav>
 
             <div className="flex items-center gap-2">
@@ -1242,6 +1413,182 @@ export default function Layout({ children, currentPageName }: LayoutProps) {
         onClose={() => setShowConflictDialog(false)}
         onAllResolved={() => setConflictCount(0)}
       />
+    </div>
+  );
+}
+
+// ── DesktopHospitalDropdown ───────────────────────────────────────────────────
+function DesktopHospitalDropdown({
+  isHospitalGroupActive,
+  hospitalGroupOpen,
+  toggleHospitalGroup,
+  paymentGroupOpen,
+  togglePaymentGroup,
+  paymentItems,
+  canStaffMgmt,
+  isActive,
+  unpaidInvoicesCount,
+}: {
+  isHospitalGroupActive: boolean;
+  hospitalGroupOpen: boolean;
+  toggleHospitalGroup: () => void;
+  paymentGroupOpen: boolean;
+  togglePaymentGroup: () => void;
+  paymentItems: Array<{
+    name: string;
+    href: string;
+    icon: React.ComponentType<{ className?: string }>;
+    label: string;
+  }>;
+  canStaffMgmt: boolean;
+  isActive: (name: string) => boolean;
+  unpaidInvoicesCount: number;
+}) {
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div
+      className="relative"
+      ref={dropdownRef}
+      data-ocid="nav.hospital_management.desktop"
+    >
+      <Button
+        variant="ghost"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "h-9 px-3 text-sm font-medium gap-2",
+          isHospitalGroupActive || open
+            ? "bg-primary/10 text-primary hover:bg-primary/15"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+        data-ocid="nav.hospital_management.toggle"
+      >
+        <Hospital className="w-4 h-4" />
+        Hospital Mgmt
+        {unpaidInvoicesCount > 0 && (
+          <span className="min-w-[16px] h-[16px] bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5 leading-none">
+            {unpaidInvoicesCount > 99 ? "99+" : unpaidInvoicesCount}
+          </span>
+        )}
+        <ChevronDown
+          className={cn(
+            "w-3.5 h-3.5 shrink-0 transition-transform",
+            open && "rotate-180",
+          )}
+        />
+      </Button>
+
+      {open && (
+        <div className="absolute left-0 top-full mt-1 w-56 bg-card border border-border rounded-xl shadow-lg z-50 py-1 overflow-hidden">
+          {/* Bed Management */}
+          <Link
+            to="/BedManagement"
+            onClick={() => setOpen(false)}
+            data-ocid="nav.bedmanagement_link"
+            className={cn(
+              "flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors border-l-4",
+              isActive("BedManagement")
+                ? "bg-primary/10 text-primary border-primary"
+                : "text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/40",
+            )}
+          >
+            <Bed className="w-4 h-4 shrink-0" />
+            Bed Management
+          </Link>
+
+          {/* Payment sub-group toggle */}
+          <button
+            type="button"
+            onClick={togglePaymentGroup}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors border-l-4 border-transparent"
+            data-ocid="nav.payment_group.toggle"
+          >
+            <DollarSign className="w-4 h-4 shrink-0 text-emerald-600/70" />
+            <span className="flex-1 text-left">Payment</span>
+            {paymentGroupOpen ? (
+              <ChevronDown className="w-3.5 h-3.5 shrink-0" />
+            ) : (
+              <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+            )}
+          </button>
+
+          {/* Payment sub-items */}
+          {paymentGroupOpen && (
+            <div className="ml-4 border-l border-border pl-2 space-y-0">
+              {paymentItems.map((item) => (
+                <Link
+                  key={item.name}
+                  to={item.href as "/Patients"}
+                  onClick={() => setOpen(false)}
+                  data-ocid={`nav.${item.name.toLowerCase()}_link`}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2 text-sm transition-colors border-l-4",
+                    isActive(item.name)
+                      ? "bg-primary/10 text-primary border-primary"
+                      : "text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/40",
+                  )}
+                >
+                  <item.icon className="w-3.5 h-3.5 shrink-0" />
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {/* Hospital Management group separator */}
+          <div className="my-1 border-t border-border" />
+
+          {/* Staff */}
+          {canStaffMgmt && (
+            <Link
+              to="/Staff"
+              onClick={() => setOpen(false)}
+              data-ocid="nav.staff_link"
+              className={cn(
+                "flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors border-l-4",
+                isActive("Staff")
+                  ? "bg-primary/10 text-primary border-primary"
+                  : "text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/40",
+              )}
+            >
+              <Users className="w-4 h-4 shrink-0" />
+              Staff
+            </Link>
+          )}
+
+          {/* Hospital Management collapse toggle */}
+          <div className="border-t border-border mt-1 pt-1">
+            <button
+              type="button"
+              onClick={toggleHospitalGroup}
+              className="w-full flex items-center gap-3 px-4 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+              data-ocid="nav.hospital_management.collapse_toggle"
+            >
+              {hospitalGroupOpen ? (
+                <ChevronDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5" />
+              )}
+              {hospitalGroupOpen ? "Collapse group" : "Expand group"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

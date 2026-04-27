@@ -1,22 +1,31 @@
 /**
  * TotalIncome — Aggregated income dashboard from all payment sources.
- * Blue/indigo theme. Date filters, breakdown table, CSS bar chart, CSV export.
+ * Blue/indigo theme. Date, doctor, and payment-method filters. CSV + PDF export.
+ * Includes refund tracking and net income calculation.
  */
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { BarChart2, Download, TrendingUp } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { BarChart2, Download, FileText, TrendingUp, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { loadReceipts } from "../components/MoneyReceipt";
 import type { MoneyReceiptData } from "../types";
 
-// ── Storage keys matching other payment pages ─────────────────────────────────
+// ── Storage keys ───────────────────────────────────────────────────────────────
 
 const PROC_PAYMENTS_KEY = "procedurePayments";
 const APT_PAYMENTS_KEY = "appointmentPayments";
 const OTHER_PAYMENTS_KEY = "otherPayments";
+const REFUNDS_KEY = "paymentRefunds";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 interface OtherPaymentRecord {
   id: string;
@@ -25,6 +34,18 @@ interface OtherPaymentRecord {
   amount: number;
   date: string;
   paidBy: string;
+  paymentMethod?: string;
+  doctorName?: string;
+}
+
+interface LocalRefundRecord {
+  id: string;
+  receiptId?: string;
+  amount: number;
+  date: string;
+  reason?: string;
+  patientName?: string;
+  paymentType?: string;
 }
 
 type DateFilter = "today" | "week" | "month" | "custom";
@@ -38,7 +59,7 @@ interface DayTotals {
   total: number;
 }
 
-// ── Load helpers ──────────────────────────────────────────────────────────────
+// ── Load helpers ───────────────────────────────────────────────────────────────
 
 function loadProcedurePayments(): MoneyReceiptData[] {
   try {
@@ -54,6 +75,8 @@ function loadAppointmentPayments(): Array<{
   fee?: number;
   date: string;
   status: string;
+  doctor?: string;
+  paymentMethod?: string;
 }> {
   try {
     return JSON.parse(localStorage.getItem(APT_PAYMENTS_KEY) || "[]");
@@ -70,7 +93,15 @@ function loadOtherPayments(): OtherPaymentRecord[] {
   }
 }
 
-// ── Date range helpers ────────────────────────────────────────────────────────
+function loadRefunds(): LocalRefundRecord[] {
+  try {
+    return JSON.parse(localStorage.getItem(REFUNDS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+// ── Date range helpers ─────────────────────────────────────────────────────────
 
 function getDateRange(
   filter: DateFilter,
@@ -79,31 +110,36 @@ function getDateRange(
 ): { from: Date; to: Date } {
   const now = new Date();
   if (filter === "today") {
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-    return { from: start, to: end };
+    const s = new Date(now);
+    s.setHours(0, 0, 0, 0);
+    const e = new Date(now);
+    e.setHours(23, 59, 59, 999);
+    return { from: s, to: e };
   }
   if (filter === "week") {
-    const start = new Date(now);
-    start.setDate(now.getDate() - 6);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-    return { from: start, to: end };
+    const s = new Date(now);
+    s.setDate(now.getDate() - 6);
+    s.setHours(0, 0, 0, 0);
+    const e = new Date(now);
+    e.setHours(23, 59, 59, 999);
+    return { from: s, to: e };
   }
   if (filter === "month") {
-    const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    const end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-    return { from: start, to: end };
+    return {
+      from: new Date(now.getFullYear(), now.getMonth(), 1),
+      to: (() => {
+        const e = new Date(now);
+        e.setHours(23, 59, 59, 999);
+        return e;
+      })(),
+    };
   }
-  const from = customFrom
-    ? new Date(customFrom)
-    : new Date(now.getFullYear(), now.getMonth(), 1);
-  const to = customTo ? new Date(`${customTo}T23:59:59`) : new Date(now);
-  return { from, to };
+  return {
+    from: customFrom
+      ? new Date(customFrom)
+      : new Date(now.getFullYear(), now.getMonth(), 1),
+    to: customTo ? new Date(`${customTo}T23:59:59`) : new Date(now),
+  };
 }
 
 function inRange(dateStr: string, from: Date, to: Date): boolean {
@@ -111,7 +147,19 @@ function inRange(dateStr: string, from: Date, to: Date): boolean {
   return d >= from && d <= to;
 }
 
-// ── Summary Card ──────────────────────────────────────────────────────────────
+// ── Doctor list helper ─────────────────────────────────────────────────────────
+
+function getAllDoctors(
+  aptPayments: Array<{ doctor?: string }>,
+  allReceipts: MoneyReceiptData[],
+): string[] {
+  const set = new Set<string>();
+  for (const p of aptPayments) if (p.doctor) set.add(p.doctor);
+  for (const r of allReceipts) if (r.doctorName) set.add(r.doctorName);
+  return [...set].sort();
+}
+
+// ── Components ─────────────────────────────────────────────────────────────────
 
 function SummaryCard({
   label,
@@ -119,12 +167,14 @@ function SummaryCard({
   labelBn,
   color,
   icon,
+  negative,
 }: {
   label: string;
   value: number;
   labelBn: string;
   color: string;
   icon: React.ReactNode;
+  negative?: boolean;
 }) {
   return (
     <div className="bg-card rounded-xl border border-border shadow-sm p-4 flex items-start gap-3">
@@ -136,15 +186,15 @@ function SummaryCard({
       <div className="min-w-0">
         <p className="text-xs text-muted-foreground mb-0.5">{label}</p>
         <p className="text-xs text-muted-foreground/60 mb-1">{labelBn}</p>
-        <p className="text-xl font-black text-foreground tabular-nums">
-          ৳ {value.toLocaleString("en-BD")}
+        <p
+          className={`text-xl font-black tabular-nums ${negative ? "text-red-600" : "text-foreground"}`}
+        >
+          {negative && value > 0 ? "−" : ""}৳ {value.toLocaleString("en-BD")}
         </p>
       </div>
     </div>
   );
 }
-
-// ── Bar chart (CSS only) ──────────────────────────────────────────────────────
 
 function IncomeBarChart({ data }: { data: DayTotals[] }) {
   const maxVal = Math.max(...data.map((d) => d.total), 1);
@@ -221,12 +271,14 @@ function IncomeBarChart({ data }: { data: DayTotals[] }) {
   );
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+// ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function TotalIncome() {
   const [dateFilter, setDateFilter] = useState<DateFilter>("month");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
+  const [filterDoctor, setFilterDoctor] = useState("all");
+  const [filterMethod, setFilterMethod] = useState("all");
 
   const { from, to } = getDateRange(dateFilter, customFrom, customTo);
 
@@ -235,56 +287,104 @@ export default function TotalIncome() {
   const procPayments = useMemo(() => loadProcedurePayments(), []);
   const aptPayments = useMemo(() => loadAppointmentPayments(), []);
   const otherPayments = useMemo(() => loadOtherPayments(), []);
+  const refunds = useMemo(() => loadRefunds(), []);
 
-  // Aggregate totals
+  const doctors = useMemo(
+    () => getAllDoctors(aptPayments, allReceipts),
+    [aptPayments, allReceipts],
+  );
+
+  // Payment methods
+  const paymentMethods: { label: string; value: string }[] = [
+    { label: "Cash", value: "cash" },
+    { label: "bKash", value: "bkash" },
+    { label: "Nagad", value: "nagad" },
+    { label: "Card", value: "card" },
+  ];
+
+  // Appointment total
   const aptTotal = useMemo(
     () =>
       aptPayments
-        .filter((p) => p.status === "paid" && inRange(p.date, from, to))
+        .filter(
+          (p) =>
+            p.status === "paid" &&
+            inRange(p.date, from, to) &&
+            (filterDoctor === "all" || p.doctor === filterDoctor) &&
+            (filterMethod === "all" || p.paymentMethod === filterMethod),
+        )
         .reduce((s, p) => s + (p.fee ?? p.amount ?? 0), 0),
-    [aptPayments, from, to],
+    [aptPayments, from, to, filterDoctor, filterMethod],
   );
 
+  // Investigation total
   const invTotal = useMemo(
     () =>
       allReceipts
         .filter(
           (r) =>
-            r.type === "investigation" && r.paid && inRange(r.date, from, to),
+            r.type === "investigation" &&
+            r.paid &&
+            inRange(r.date, from, to) &&
+            (filterDoctor === "all" || r.doctorName === filterDoctor),
         )
         .reduce((s, r) => s + (r.finalAmount ?? r.amount), 0),
-    [allReceipts, from, to],
+    [allReceipts, from, to, filterDoctor],
   );
 
+  // Procedure total
   const procTotal = useMemo(() => {
     const moneyReceipts = allReceipts.filter(
-      (r) => r.type === "procedure" && r.paid && inRange(r.date, from, to),
+      (r) =>
+        r.type === "procedure" &&
+        r.paid &&
+        inRange(r.date, from, to) &&
+        (filterDoctor === "all" || r.doctorName === filterDoctor),
     );
     const procReceipts = procPayments.filter(
-      (r) => r.paid && inRange(r.date, from, to),
+      (r) =>
+        r.paid &&
+        inRange(r.date, from, to) &&
+        (filterDoctor === "all" || r.doctorName === filterDoctor),
     );
     const combined = [...procReceipts];
     for (const m of moneyReceipts) {
       if (!combined.find((r) => r.id === m.id)) combined.push(m);
     }
     return combined.reduce((s, r) => s + (r.finalAmount ?? r.amount), 0);
-  }, [allReceipts, procPayments, from, to]);
+  }, [allReceipts, procPayments, from, to, filterDoctor]);
 
+  // Other total
   const otherTotal = useMemo(
     () =>
       otherPayments
-        .filter((p) => inRange(p.date, from, to))
+        .filter(
+          (p) =>
+            inRange(p.date, from, to) &&
+            (filterDoctor === "all" || p.doctorName === filterDoctor) &&
+            (filterMethod === "all" || p.paymentMethod === filterMethod),
+        )
         .reduce((s, p) => s + p.amount, 0),
-    [otherPayments, from, to],
+    [otherPayments, from, to, filterDoctor, filterMethod],
   );
 
-  const grandTotal = aptTotal + invTotal + procTotal + otherTotal;
+  // Refunds total
+  const refundsTotal = useMemo(
+    () =>
+      refunds
+        .filter((r) => inRange(r.date, from, to))
+        .reduce((s, r) => s + r.amount, 0),
+    [refunds, from, to],
+  );
 
-  // Build breakdown table grouped by date
+  const grossTotal = aptTotal + invTotal + procTotal + otherTotal;
+  const netTotal = grossTotal - refundsTotal;
+
+  // Build breakdown by day
   const breakdown = useMemo((): DayTotals[] => {
     const map = new Map<string, DayTotals>();
 
-    function getDay(_rec: DayTotals, dateStr: string) {
+    function getDay(dateStr: string) {
       const day = dateStr.split("T")[0];
       if (!map.has(day))
         map.set(day, {
@@ -300,14 +400,18 @@ export default function TotalIncome() {
 
     for (const p of aptPayments) {
       if (p.status !== "paid" || !inRange(p.date, from, to)) continue;
-      const d = getDay({} as DayTotals, p.date);
-      d.appointment += p.fee ?? p.amount ?? 0;
-      d.total += p.fee ?? p.amount ?? 0;
+      if (filterDoctor !== "all" && p.doctor !== filterDoctor) continue;
+      if (filterMethod !== "all" && p.paymentMethod !== filterMethod) continue;
+      const d = getDay(p.date);
+      const amt = p.fee ?? p.amount ?? 0;
+      d.appointment += amt;
+      d.total += amt;
     }
     for (const r of allReceipts) {
       if (!r.paid || !inRange(r.date, from, to)) continue;
+      if (filterDoctor !== "all" && r.doctorName !== filterDoctor) continue;
       const amt = r.finalAmount ?? r.amount;
-      const d = getDay({} as DayTotals, r.date);
+      const d = getDay(r.date);
       if (r.type === "investigation") {
         d.investigation += amt;
         d.total += amt;
@@ -321,21 +425,35 @@ export default function TotalIncome() {
     }
     for (const r of procPayments) {
       if (!r.paid || !inRange(r.date, from, to)) continue;
+      if (filterDoctor !== "all" && r.doctorName !== filterDoctor) continue;
       if (allReceipts.find((m) => m.id === r.id)) continue;
       const amt = r.finalAmount ?? r.amount;
-      const d = getDay({} as DayTotals, r.date);
+      const d = getDay(r.date);
       d.procedure += amt;
       d.total += amt;
     }
     for (const p of otherPayments) {
       if (!inRange(p.date, from, to)) continue;
-      const d = getDay({} as DayTotals, p.date);
+      if (filterDoctor !== "all" && p.doctorName !== filterDoctor) continue;
+      if (filterMethod !== "all" && p.paymentMethod !== filterMethod) continue;
+      const d = getDay(p.date);
       d.other += p.amount;
       d.total += p.amount;
     }
 
     return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
-  }, [aptPayments, allReceipts, procPayments, otherPayments, from, to]);
+  }, [
+    aptPayments,
+    allReceipts,
+    procPayments,
+    otherPayments,
+    from,
+    to,
+    filterDoctor,
+    filterMethod,
+  ]);
+
+  // ── Export CSV ───────────────────────────────────────────────────────────────
 
   function exportCSV() {
     const headers = [
@@ -357,10 +475,17 @@ export default function TotalIncome() {
       ].join(","),
     );
     rows.push(
-      ["TOTAL", aptTotal, invTotal, procTotal, otherTotal, grandTotal].join(
-        ",",
-      ),
+      [
+        "GROSS TOTAL",
+        aptTotal,
+        invTotal,
+        procTotal,
+        otherTotal,
+        grossTotal,
+      ].join(","),
     );
+    rows.push(["REFUNDS", "", "", "", "", `-${refundsTotal}`].join(","));
+    rows.push(["NET INCOME", "", "", "", "", netTotal].join(","));
     const csv = [headers.join(","), ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -371,12 +496,113 @@ export default function TotalIncome() {
     URL.revokeObjectURL(url);
   }
 
+  // ── Export PDF (print-based) ─────────────────────────────────────────────────
+
+  function exportPDF() {
+    const dateLabel =
+      dateFilter === "custom"
+        ? `${customFrom || "—"} to ${customTo || "—"}`
+        : dateFilter === "today"
+          ? "Today"
+          : dateFilter === "week"
+            ? "This Week"
+            : "This Month";
+
+    const rows = breakdown
+      .map(
+        (d) =>
+          `<tr>
+            <td>${new Date(d.date).toLocaleDateString("en-BD", { year: "numeric", month: "short", day: "numeric" })}</td>
+            <td style="text-align:right">${d.appointment > 0 ? `৳ ${d.appointment.toLocaleString("en-BD")}` : "—"}</td>
+            <td style="text-align:right">${d.investigation > 0 ? `৳ ${d.investigation.toLocaleString("en-BD")}` : "—"}</td>
+            <td style="text-align:right">${d.procedure > 0 ? `৳ ${d.procedure.toLocaleString("en-BD")}` : "—"}</td>
+            <td style="text-align:right">${d.other > 0 ? `৳ ${d.other.toLocaleString("en-BD")}` : "—"}</td>
+            <td style="text-align:right;font-weight:bold">৳ ${d.total.toLocaleString("en-BD")}</td>
+          </tr>`,
+      )
+      .join("");
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Income Report</title>
+      <style>
+        body{font-family:serif;max-width:800px;margin:40px auto;padding:0 20px;color:#111}
+        h1{font-size:22px;margin-bottom:4px}
+        .subtitle{font-size:13px;color:#555;margin-bottom:20px}
+        .meta{display:flex;gap:24px;margin-bottom:20px;font-size:12px;color:#444}
+        table{width:100%;border-collapse:collapse;font-size:13px}
+        th{background:#e8eaf6;text-align:left;padding:8px 10px;font-size:11px;border-bottom:2px solid #3f51b5}
+        td{padding:7px 10px;border-bottom:1px solid #e0e0e0}
+        tr:last-child td{border-bottom:none}
+        .totals-row td{background:#e8eaf6;font-weight:bold;border-top:2px solid #3f51b5}
+        .net-row td{background:#c8e6c9;font-weight:bold;font-size:14px}
+        .refund-row td{background:#fce4ec;color:#c62828}
+        .summary{margin-top:24px;border:1px solid #ddd;border-radius:8px;padding:16px}
+        .summary h2{font-size:14px;margin:0 0 12px}
+        .summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+        .summary-item{font-size:12px;display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #eee}
+        .summary-item span:last-child{font-weight:bold}
+        @media print{body{margin:20px}}
+      </style></head><body>
+      <h1>Dr. Arman Kabir's Care — Income Report</h1>
+      <div class="subtitle">মোট আয়ের প্রতিবেদন</div>
+      <div class="meta">
+        <span><strong>Period:</strong> ${dateLabel}</span>
+        ${filterDoctor !== "all" ? `<span><strong>Doctor:</strong> ${filterDoctor}</span>` : ""}
+        ${filterMethod !== "all" ? `<span><strong>Method:</strong> ${filterMethod}</span>` : ""}
+        <span><strong>Generated:</strong> ${new Date().toLocaleDateString("en-BD", { year: "numeric", month: "long", day: "numeric" })}</span>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Date</th>
+          <th style="text-align:right">Appointment</th>
+          <th style="text-align:right">Investigation</th>
+          <th style="text-align:right">Procedure</th>
+          <th style="text-align:right">Other</th>
+          <th style="text-align:right">Total</th>
+        </tr></thead>
+        <tbody>
+          ${rows}
+          <tr class="totals-row">
+            <td>GROSS TOTAL</td>
+            <td style="text-align:right">৳ ${aptTotal.toLocaleString("en-BD")}</td>
+            <td style="text-align:right">৳ ${invTotal.toLocaleString("en-BD")}</td>
+            <td style="text-align:right">৳ ${procTotal.toLocaleString("en-BD")}</td>
+            <td style="text-align:right">৳ ${otherTotal.toLocaleString("en-BD")}</td>
+            <td style="text-align:right">৳ ${grossTotal.toLocaleString("en-BD")}</td>
+          </tr>
+          ${
+            refundsTotal > 0
+              ? `<tr class="refund-row">
+            <td>REFUNDS</td>
+            <td></td><td></td><td></td><td></td>
+            <td style="text-align:right">− ৳ ${refundsTotal.toLocaleString("en-BD")}</td>
+          </tr>`
+              : ""
+          }
+          <tr class="net-row">
+            <td>NET INCOME</td>
+            <td></td><td></td><td></td><td></td>
+            <td style="text-align:right">৳ ${netTotal.toLocaleString("en-BD")}</td>
+          </tr>
+        </tbody>
+      </table>
+      <script>window.onload=()=>{window.print();window.onafterprint=()=>window.close();}</script>
+    </body></html>`;
+
+    const win = window.open("", "_blank");
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+    }
+  }
+
   const filterBtns: { label: string; value: DateFilter }[] = [
     { label: "Today", value: "today" },
     { label: "This Week", value: "week" },
     { label: "This Month", value: "month" },
     { label: "Custom", value: "custom" },
   ];
+
+  const hasActiveFilters = filterDoctor !== "all" || filterMethod !== "all";
 
   return (
     <div className="min-h-screen bg-background" data-ocid="total_income.page">
@@ -387,50 +613,84 @@ export default function TotalIncome() {
             <div>
               <p className="text-indigo-200 text-xs mb-0.5">Finance</p>
               <h1 className="text-2xl font-black tracking-tight flex items-center gap-2">
-                <TrendingUp className="w-6 h-6" />
-                Total Income
+                <TrendingUp className="w-6 h-6" /> Total Income
               </h1>
               <p className="text-indigo-200 text-sm mt-0.5">
                 মোট আয়ের সারসংক্ষেপ
               </p>
             </div>
-            <Button
-              size="sm"
-              className="bg-white text-indigo-700 hover:bg-indigo-50 font-semibold gap-1.5"
-              onClick={exportCSV}
-              data-ocid="total_income.export_csv.button"
-            >
-              <Download className="w-4 h-4" />
-              Export CSV
-            </Button>
+            <div className="flex gap-2 flex-wrap">
+              <Button
+                size="sm"
+                className="bg-white text-indigo-700 hover:bg-indigo-50 font-semibold gap-1.5"
+                onClick={exportCSV}
+                data-ocid="total_income.export_csv.button"
+              >
+                <Download className="w-4 h-4" /> Export CSV
+              </Button>
+              <Button
+                size="sm"
+                className="bg-indigo-500 hover:bg-indigo-400 text-white border border-indigo-300 font-semibold gap-1.5"
+                onClick={exportPDF}
+                data-ocid="total_income.export_pdf.button"
+              >
+                <FileText className="w-4 h-4" /> Export PDF
+              </Button>
+            </div>
           </div>
 
-          {/* Grand total */}
-          <div className="bg-white/15 rounded-xl p-4 mt-5 backdrop-blur-sm inline-block">
-            <p className="text-indigo-100 text-xs mb-1">Grand Total / মোট আয়</p>
-            <p className="text-white font-black text-3xl">
-              ৳ {grandTotal.toLocaleString("en-BD")}
-            </p>
+          {/* Grand totals row */}
+          <div className="flex flex-wrap gap-4 mt-5">
+            <div className="bg-white/15 rounded-xl p-4 backdrop-blur-sm">
+              <p className="text-indigo-100 text-xs mb-1">
+                Gross Income / মোট আয়
+              </p>
+              <p className="text-white font-black text-3xl tabular-nums">
+                ৳ {grossTotal.toLocaleString("en-BD")}
+              </p>
+            </div>
+            {refundsTotal > 0 && (
+              <div className="bg-red-500/30 rounded-xl p-4 backdrop-blur-sm">
+                <p className="text-red-100 text-xs mb-1">Refunds / ফেরত</p>
+                <p className="text-red-100 font-black text-3xl tabular-nums">
+                  − ৳ {refundsTotal.toLocaleString("en-BD")}
+                </p>
+              </div>
+            )}
+            <div className="bg-emerald-500/30 rounded-xl p-4 backdrop-blur-sm">
+              <p className="text-emerald-100 text-xs mb-1">
+                Net Income / নিট আয়
+              </p>
+              <p className="text-white font-black text-3xl tabular-nums">
+                ৳ {netTotal.toLocaleString("en-BD")}
+              </p>
+            </div>
           </div>
         </div>
       </div>
 
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-5">
-        {/* Date filter */}
-        <div className="bg-card rounded-xl border border-border shadow-sm p-4">
-          <div className="flex flex-wrap gap-2 mb-3">
+        {/* Filters */}
+        <div className="bg-card rounded-xl border border-border shadow-sm p-4 space-y-3">
+          {/* Date range buttons */}
+          <div className="flex flex-wrap gap-2">
             {filterBtns.map((btn) => (
               <button
                 key={btn.value}
                 type="button"
                 onClick={() => setDateFilter(btn.value)}
-                className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${dateFilter === btn.value ? "bg-indigo-600 text-white border-indigo-600" : "bg-card text-muted-foreground border-border hover:border-indigo-300"}`}
+                className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
+                  dateFilter === btn.value
+                    ? "bg-indigo-600 text-white border-indigo-600"
+                    : "bg-card text-muted-foreground border-border hover:border-indigo-300"
+                }`}
                 data-ocid={`total_income.${btn.value}_filter.tab`}
               >
                 {btn.label}
               </button>
             ))}
           </div>
+
           {dateFilter === "custom" && (
             <div className="flex gap-3 flex-wrap">
               <div className="space-y-1">
@@ -467,6 +727,59 @@ export default function TotalIncome() {
               </div>
             </div>
           )}
+
+          {/* Doctor + Payment Method filters */}
+          <div className="flex flex-wrap gap-2 items-center pt-1 border-t border-border">
+            <span className="text-xs text-muted-foreground font-medium shrink-0">
+              Filter by:
+            </span>
+            <Select value={filterDoctor} onValueChange={setFilterDoctor}>
+              <SelectTrigger
+                className="h-8 text-sm w-52"
+                data-ocid="total_income.doctor_filter.select"
+              >
+                <SelectValue placeholder="All Doctors" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Doctors</SelectItem>
+                {doctors.map((d) => (
+                  <SelectItem key={d} value={d}>
+                    {d}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filterMethod} onValueChange={setFilterMethod}>
+              <SelectTrigger
+                className="h-8 text-sm w-40"
+                data-ocid="total_income.method_filter.select"
+              >
+                <SelectValue placeholder="All Methods" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Methods</SelectItem>
+                {paymentMethods.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {hasActiveFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs text-muted-foreground gap-1"
+                onClick={() => {
+                  setFilterDoctor("all");
+                  setFilterMethod("all");
+                }}
+                data-ocid="total_income.clear_filters.button"
+              >
+                <X className="w-3 h-3" /> Clear filters
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Summary cards */}
@@ -507,12 +820,32 @@ export default function TotalIncome() {
           />
         </div>
 
+        {/* Refund + Net Income summary row */}
+        <div className="grid grid-cols-2 gap-4">
+          <SummaryCard
+            label="Total Refunds"
+            labelBn="মোট ফেরত"
+            value={refundsTotal}
+            color="bg-red-100"
+            icon={<span className="text-red-600 font-black text-xs">REF</span>}
+            negative
+          />
+          <SummaryCard
+            label="Net Income"
+            labelBn="নিট আয়"
+            value={netTotal}
+            color="bg-emerald-100"
+            icon={
+              <span className="text-emerald-600 font-black text-xs">NET</span>
+            }
+          />
+        </div>
+
         {/* Bar chart */}
         {breakdown.length > 0 && (
           <div className="bg-card rounded-xl border border-border shadow-sm p-4">
             <h3 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
-              <BarChart2 className="w-4 h-4 text-indigo-600" />
-              Income by Day
+              <BarChart2 className="w-4 h-4 text-indigo-600" /> Income by Day
             </h3>
             <IncomeBarChart data={breakdown} />
           </div>
@@ -523,10 +856,15 @@ export default function TotalIncome() {
           className="bg-card rounded-xl border border-border shadow-sm overflow-hidden"
           data-ocid="total_income.breakdown.table"
         >
-          <div className="bg-indigo-50 border-b border-indigo-100 px-4 py-3">
+          <div className="bg-indigo-50 border-b border-indigo-100 px-4 py-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-indigo-800">
               Daily Breakdown
             </h3>
+            {hasActiveFilters && (
+              <span className="text-xs text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full">
+                Filtered view
+              </span>
+            )}
           </div>
           {breakdown.length === 0 ? (
             <div
@@ -535,7 +873,9 @@ export default function TotalIncome() {
             >
               <TrendingUp className="w-10 h-10 opacity-30" />
               <p className="font-semibold">No income data for this period</p>
-              <p className="text-sm">Try a different date range.</p>
+              <p className="text-sm">
+                Try a different date range or remove filters.
+              </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -604,7 +944,7 @@ export default function TotalIncome() {
                   {/* Totals row */}
                   <tr className="bg-indigo-50 border-t-2 border-indigo-200 font-bold">
                     <td className="px-4 py-3 text-sm text-indigo-800 font-black">
-                      TOTAL
+                      GROSS TOTAL
                     </td>
                     <td className="px-4 py-3 text-right text-xs text-green-700 hidden sm:table-cell">
                       ৳ {aptTotal.toLocaleString("en-BD")}
@@ -619,7 +959,31 @@ export default function TotalIncome() {
                       ৳ {otherTotal.toLocaleString("en-BD")}
                     </td>
                     <td className="px-4 py-3 text-right text-indigo-800 font-black">
-                      ৳ {grandTotal.toLocaleString("en-BD")}
+                      ৳ {grossTotal.toLocaleString("en-BD")}
+                    </td>
+                  </tr>
+                  {refundsTotal > 0 && (
+                    <tr className="bg-red-50 border-t border-red-200">
+                      <td
+                        className="px-4 py-2.5 text-xs text-red-700 font-semibold"
+                        colSpan={5}
+                      >
+                        Refunds
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-xs text-red-700 font-bold">
+                        − ৳ {refundsTotal.toLocaleString("en-BD")}
+                      </td>
+                    </tr>
+                  )}
+                  <tr className="bg-emerald-50 border-t-2 border-emerald-300 font-bold">
+                    <td
+                      className="px-4 py-3 text-sm text-emerald-800 font-black"
+                      colSpan={5}
+                    >
+                      NET INCOME
+                    </td>
+                    <td className="px-4 py-3 text-right text-emerald-800 font-black text-base">
+                      ৳ {netTotal.toLocaleString("en-BD")}
                     </td>
                   </tr>
                 </tbody>

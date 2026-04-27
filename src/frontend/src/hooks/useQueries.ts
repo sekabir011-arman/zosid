@@ -1367,6 +1367,7 @@ export function useCreateBedRecord() {
       bedNumber: string;
       ward: string;
       hospitalName?: string;
+      floor?: string;
     }) => {
       const all = getClinicalEntities<BedRecord>("beds");
       const newBed: BedRecord = {
@@ -1374,6 +1375,7 @@ export function useCreateBedRecord() {
         bedNumber: data.bedNumber,
         ward: data.ward,
         hospitalName: data.hospitalName ?? "",
+        floor: data.floor,
         status: "Empty",
         transferHistory: [],
       };

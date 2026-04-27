@@ -232,3 +232,164 @@ export function saveAllergyOverrides(
   const key = `${ALLERGY_OVERRIDES_KEY_PREFIX}${doctorEmail}_${patientId}`;
   localStorage.setItem(key, JSON.stringify(overrides));
 }
+
+// ── Emergency Notifications ───────────────────────────────────────────────────
+
+export interface EmergencyNotification {
+  id: string;
+  type: "EMERGENCY_RX";
+  patientId: string;
+  patientName: string;
+  prescriptionId: string;
+  time: string; // ISO string
+  acknowledged: boolean;
+  acknowledgedBy?: string;
+  acknowledgedAt?: string;
+}
+
+const EMERGENCY_NOTIFICATIONS_KEY = "emergency_rx_notifications";
+
+export function loadEmergencyNotifications(): EmergencyNotification[] {
+  try {
+    const raw = localStorage.getItem(EMERGENCY_NOTIFICATIONS_KEY);
+    if (raw) return JSON.parse(raw) as EmergencyNotification[];
+  } catch {}
+  return [];
+}
+
+export function saveEmergencyNotifications(
+  notifications: EmergencyNotification[],
+): void {
+  localStorage.setItem(
+    EMERGENCY_NOTIFICATIONS_KEY,
+    JSON.stringify(notifications),
+  );
+}
+
+export function addEmergencyNotification(
+  notification: Omit<EmergencyNotification, "id">,
+): void {
+  const existing = loadEmergencyNotifications();
+  const newNotif: EmergencyNotification = {
+    ...notification,
+    id: `emrx_notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  };
+  saveEmergencyNotifications([newNotif, ...existing]);
+}
+
+export function acknowledgeEmergencyNotification(
+  notificationId: string,
+  acknowledgedBy: string,
+): void {
+  const existing = loadEmergencyNotifications();
+  const updated = existing.map((n) =>
+    n.id === notificationId
+      ? {
+          ...n,
+          acknowledged: true,
+          acknowledgedBy,
+          acknowledgedAt: new Date().toISOString(),
+        }
+      : n,
+  );
+  saveEmergencyNotifications(updated);
+}
+
+export function getUnacknowledgedEmergencyNotifications(): EmergencyNotification[] {
+  return loadEmergencyNotifications().filter((n) => !n.acknowledged);
+}
+
+// ── Emergency Rx → Inpatient Auto-link ───────────────────────────────────────
+
+/**
+ * When a patient is admitted (bed assigned), scan for any emergency prescriptions
+ * for that patient and auto-populate drugs into the inpatient medication chart
+ * with a "From Emergency Rx" label and the emergency timestamp.
+ *
+ * Returns the auto-linked drug names (empty if none found).
+ */
+export function autoLinkEmergencyRxToInpatientChart(
+  patientId: string,
+  admissionDate: string,
+  doctorEmail: string,
+): string[] {
+  try {
+    // Find emergency Rx ext records for this patient
+    const autoLinkedDrugs: string[] = [];
+    const prescriptionsKey = `prescriptions_${doctorEmail}_${patientId}`;
+    const rxRaw = localStorage.getItem(prescriptionsKey);
+    if (!rxRaw) return [];
+
+    const prescriptions = JSON.parse(rxRaw) as Array<{
+      id: string;
+      medications?: Array<{
+        name?: string;
+        drugName?: string;
+        prescriptionType?: string;
+        fromEmergencyRx?: string;
+      }>;
+      notes?: string;
+      createdAt?: string;
+    }>;
+
+    // Find emergency prescriptions near the admission date
+    const admitMs = new Date(admissionDate).getTime();
+    const windowMs = 48 * 60 * 60 * 1000; // 48 hours before/after
+
+    for (const rx of prescriptions) {
+      const extKey = `prescription_ext_${rx.id}`;
+      const extRaw = localStorage.getItem(extKey);
+      const isEmergency =
+        (extRaw && JSON.parse(extRaw)?.prescriptionType === "emergency") ||
+        rx.medications?.some((m) => m.prescriptionType === "emergency");
+
+      if (!isEmergency) continue;
+
+      // Check timing
+      const rxAt = rx.createdAt ? new Date(rx.createdAt).getTime() : admitMs;
+      if (Math.abs(rxAt - admitMs) > windowMs) continue;
+
+      // Get existing inpatient medication chart key
+      const today = new Date(admissionDate).toISOString().split("T")[0];
+      const chartKey = `daily_note_${doctorEmail}_${patientId}_${today}`;
+      const chartRaw = localStorage.getItem(chartKey);
+      const chart = chartRaw ? JSON.parse(chartRaw) : null;
+      const existingDrugNames = new Set<string>(
+        (chart?.planItems ?? []).map((p: { description?: string }) =>
+          (p.description ?? "").toLowerCase(),
+        ),
+      );
+
+      for (const med of rx.medications ?? []) {
+        const drugName = med.drugName || med.name || "";
+        if (!drugName || existingDrugNames.has(drugName.toLowerCase()))
+          continue;
+
+        // Add to plan items with emergency tag
+        const planItem = {
+          id: `emrx_link_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+          category: "drug" as const,
+          description: drugName,
+          dose: "",
+          frequency: "",
+          duration: "",
+          route: (med as Record<string, string | undefined>).route ?? "IV",
+          form: (med as Record<string, string | undefined>).drugForm ?? "Inj.",
+          fromEmergencyRx: true,
+          emergencyRxTime: new Date(rxAt).toISOString(),
+        };
+
+        if (chart) {
+          chart.planItems = [...(chart.planItems ?? []), planItem];
+          localStorage.setItem(chartKey, JSON.stringify(chart));
+        }
+        autoLinkedDrugs.push(drugName);
+        existingDrugNames.add(drugName.toLowerCase());
+      }
+    }
+
+    return autoLinkedDrugs;
+  } catch {
+    return [];
+  }
+}
