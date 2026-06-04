@@ -1244,7 +1244,7 @@ function HandoverForm({
             />
             <VitalField
               label="Temp"
-              unit="°C"
+              unit="°F"
               vkey="temp"
               value={temp}
               onChange={setTemp}
@@ -1889,7 +1889,7 @@ function DocView({
               <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                 {vitalDisplay("BP", doc.vitals.bp, "mmHg", "bp")}
                 {vitalDisplay("Pulse", doc.vitals.pulse, "bpm", "pulse")}
-                {vitalDisplay("Temp", doc.vitals.temp, "°C", "temp")}
+                {vitalDisplay("Temp", doc.vitals.temp, "°F", "temp")}
                 {vitalDisplay("SpO₂", doc.vitals.spo2, "%", "spo2")}
                 {vitalDisplay("RR", doc.vitals.rr, "b/min", "rr")}
                 {doc.vitals.weight &&

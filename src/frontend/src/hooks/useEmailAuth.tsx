@@ -61,13 +61,30 @@ function hashPassword(key: string, password: string): string {
 }
 
 const VALID_ROLES: StaffRole[] = [
+  "admin",
   "consultant_doctor",
+  "assistant_professor",
+  "associate_professor",
+  "professor",
   "medical_officer",
+  "assistant_registrar",
+  "registrar",
   "intern_doctor",
   "nurse",
+  "reception",
   "staff",
+  "patient",
   "doctor",
 ];
+
+export function isConsultantLevel(role: StaffRole): boolean {
+  return [
+    "consultant_doctor",
+    "assistant_professor",
+    "associate_professor",
+    "professor",
+  ].includes(role);
+}
 
 export function loadRegistry(): DoctorAccount[] {
   try {

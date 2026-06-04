@@ -39,7 +39,15 @@ import {
   XCircle,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Layout from "./Layout";
 import { createActor } from "./backend";
 import { CanisterActorsProvider } from "./canisterActors";
@@ -58,26 +66,31 @@ import {
 import type { DoctorAccount, PatientAccount } from "./hooks/useEmailAuth";
 import { useMigration } from "./hooks/useMigration";
 import { getCanisterActor, setCanisterActor } from "./hooks/useQueries";
-import AppointmentPayment from "./pages/AppointmentPayment";
-import Appointments from "./pages/Appointments";
-import AuditLog from "./pages/AuditLog";
-import BedManagement from "./pages/BedManagement";
-import Dashboard from "./pages/Dashboard";
-import EmergencyPrescription from "./pages/EmergencyPrescription";
-import InvestigationPaymentPage from "./pages/InvestigationPaymentPage";
-import LandingPage from "./pages/LandingPage";
-import OtherPayment from "./pages/OtherPayment";
-import OutstandingBalances from "./pages/OutstandingBalances";
-import PatientDashboard from "./pages/PatientDashboard";
-import Patients from "./pages/Patients";
-import ProcedurePayment from "./pages/ProcedurePayment";
-import RegistrarDashboard from "./pages/RegistrarDashboard";
-import SerialDisplay from "./pages/SerialDisplay";
-import Settings from "./pages/Settings";
-import Staff from "./pages/Staff";
-import TotalIncome from "./pages/TotalIncome";
-import VisitPage from "./pages/VisitPage";
-import WardRound from "./pages/WardRound";
+
+const AppointmentPayment = lazy(() => import("./pages/AppointmentPayment"));
+const Appointments = lazy(() => import("./pages/Appointments"));
+const AuditLog = lazy(() => import("./pages/AuditLog"));
+const BedManagement = lazy(() => import("./pages/BedManagement"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const EmergencyPrescription = lazy(
+  () => import("./pages/EmergencyPrescription"),
+);
+const InvestigationPaymentPage = lazy(
+  () => import("./pages/InvestigationPaymentPage"),
+);
+const LandingPage = lazy(() => import("./pages/LandingPage"));
+const OtherPayment = lazy(() => import("./pages/OtherPayment"));
+const OutstandingBalances = lazy(() => import("./pages/OutstandingBalances"));
+const PatientDashboard = lazy(() => import("./pages/PatientDashboard"));
+const Patients = lazy(() => import("./pages/Patients"));
+const ProcedurePayment = lazy(() => import("./pages/ProcedurePayment"));
+const RegistrarDashboard = lazy(() => import("./pages/RegistrarDashboard"));
+const SerialDisplay = lazy(() => import("./pages/SerialDisplay"));
+const Settings = lazy(() => import("./pages/Settings"));
+const Staff = lazy(() => import("./pages/Staff"));
+const TotalIncome = lazy(() => import("./pages/TotalIncome"));
+const VisitPage = lazy(() => import("./pages/VisitPage"));
+const WardRound = lazy(() => import("./pages/WardRound"));
 import {
   ROLE_HIERARCHY_ORDER,
   STAFF_ROLE_COLORS,
@@ -2279,7 +2292,15 @@ function AppInner() {
         </div>
       )}
       <div style={showBackendBanner ? { paddingTop: "40px" } : undefined}>
-        <RouterProvider router={router} />
+        <Suspense
+          fallback={
+            <div className="flex items-center justify-center h-screen">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            </div>
+          }
+        >
+          <RouterProvider router={router} />
+        </Suspense>
       </div>
       <Toaster position="top-right" richColors />
       {showWarning && (

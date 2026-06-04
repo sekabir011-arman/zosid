@@ -30,6 +30,7 @@ export interface UseCanisterSyncResult {
   syncStatus: SyncStatus;
   triggerSync: () => Promise<void>;
   itemsPending: number;
+  syncBannerMessage: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -46,6 +47,9 @@ export function useCanisterSync(): UseCanisterSyncResult {
     syncActor ? "pending" : "offline",
   );
   const [itemsPending, setItemsPending] = useState(0);
+  const [syncBannerMessage, setSyncBannerMessage] = useState<string | null>(
+    null,
+  );
   const deviceIdRef = useRef<string | null>(null);
   const isSyncingRef = useRef(false);
 
@@ -59,10 +63,18 @@ export function useCanisterSync(): UseCanisterSyncResult {
   }
 
   const triggerSync = useCallback(async () => {
-    if (!syncActor || isSyncingRef.current) return;
+    if (!syncActor || isSyncingRef.current) {
+      if (!syncActor) {
+        setSyncBannerMessage(
+          "Backend not connected — data is saved on this device only and will NOT sync to other devices. Contact support if this persists.",
+        );
+      }
+      return;
+    }
 
     isSyncingRef.current = true;
     setSyncStatus("syncing");
+    setSyncBannerMessage(null);
 
     try {
       await (
@@ -77,9 +89,13 @@ export function useCanisterSync(): UseCanisterSyncResult {
       setLastSyncTime(new Date());
       setItemsPending(0);
       setSyncStatus("synced");
+      setSyncBannerMessage(null);
     } catch {
       // sync failed — stay in pending state so UI retries
       setSyncStatus("pending");
+      setSyncBannerMessage(
+        "Sync failed — will retry automatically. Data is safe on this device.",
+      );
     } finally {
       isSyncingRef.current = false;
     }
@@ -106,5 +122,11 @@ export function useCanisterSync(): UseCanisterSyncResult {
     return () => clearInterval(interval);
   }, [triggerSync]);
 
-  return { lastSyncTime, syncStatus, triggerSync, itemsPending };
+  return {
+    lastSyncTime,
+    syncStatus,
+    triggerSync,
+    itemsPending,
+    syncBannerMessage,
+  };
 }

@@ -177,7 +177,7 @@ export function VitalEntryForm({
     const entries = [
       { code: "BP", value: bp, unit: "mmHg" },
       { code: "Pulse", value: pulse, unit: "beats/min" },
-      { code: "Temperature", value: temp, unit: "°C" },
+      { code: "Temperature", value: temp, unit: "°F" },
       { code: "SpO2", value: spo2, unit: "%" },
       { code: "RR", value: rr, unit: "breaths/min" },
       { code: "RBS", value: rbs, unit: "mmol/L" },
@@ -214,7 +214,7 @@ export function VitalEntryForm({
             placeholder: "72",
           },
           {
-            label: "Temp (°C)",
+            label: "Temp (°F)",
             val: temp,
             set: setTemp,
             ref: null,

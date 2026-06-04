@@ -349,7 +349,7 @@ export function checkSepsisAlert(vitals: {
 }): ClinicalAlert | null {
   const criteria: string[] = [];
   if (vitals.temp !== undefined && (vitals.temp > 38.3 || vitals.temp < 36))
-    criteria.push(`Temp ${vitals.temp}°C`);
+    criteria.push(`Temp ${vitals.temp}°F`);
   if (vitals.pulse !== undefined && vitals.pulse > 90)
     criteria.push(`Pulse ${vitals.pulse} bpm`);
   if (vitals.rr !== undefined && vitals.rr > 20)
@@ -575,14 +575,14 @@ export function checkVitalAlerts(vitals: {
           field: "Temp",
           value: vitals.temperature,
           severity: "warning",
-          message: `Fever: Temp ${temp}°C`,
+          message: `Fever: Temp ${temp}°F`,
         });
       else if (temp < 36)
         alerts.push({
           field: "Temp",
           value: vitals.temperature,
           severity: "warning",
-          message: `Hypothermia: Temp ${temp}°C`,
+          message: `Hypothermia: Temp ${temp}°F`,
         });
     }
   }
@@ -1245,7 +1245,7 @@ function checkEndocrine(input: ExtendedAlertInput): ExtendedAlert[] {
         "endocrine",
         "ThyroidStorm",
         "critical",
-        `Thyroid Storm: HR ${v.heartRate} bpm, Temp ${v.temperature}°C`,
+        `Thyroid Storm: HR ${v.heartRate} bpm, Temp ${v.temperature}°F`,
         "Hyperthyroid + tachycardia + fever — thyroid storm (Burch–Wartofsky criteria).",
         "PTU/carbimazole, beta-blockers, hydrocortisone, iodine solution — ICU admission.",
       ),
@@ -1265,7 +1265,7 @@ function checkEndocrine(input: ExtendedAlertInput): ExtendedAlert[] {
         "endocrine",
         "MyxedemaComa",
         "critical",
-        `Myxedema Coma Risk: Temp ${v.temperature}°C, HR ${v.heartRate} bpm`,
+        `Myxedema Coma Risk: Temp ${v.temperature}°F, HR ${v.heartRate} bpm`,
         "Hypothyroid + hypothermia + bradycardia — myxedema coma.",
         "IV levothyroxine + hydrocortisone, warming, respiratory support.",
       ),
@@ -1332,7 +1332,7 @@ function checkInfectionControl(input: ExtendedAlertInput): ExtendedAlert[] {
   const l = input.labs ?? {};
   const meds = input.medications ?? [];
 
-  // Neutropenic Sepsis: Fever (>38°C) + ANC < 500
+  // Neutropenic Sepsis: Fever (>38°F) + ANC < 500
   const hasFever = v.temperature !== undefined && v.temperature > 38;
   const ancLow = l.anc !== undefined && l.anc < 500;
   if (hasFever && ancLow) {
@@ -1341,7 +1341,7 @@ function checkInfectionControl(input: ExtendedAlertInput): ExtendedAlert[] {
         "infection_control",
         "NeutropenicSepsis",
         "critical",
-        `Neutropenic Sepsis: Temp ${v.temperature}°C, ANC ${l.anc}`,
+        `Neutropenic Sepsis: Temp ${v.temperature}°F, ANC ${l.anc}`,
         "Fever + severe neutropenia. Medical emergency — mortality >50% if untreated.",
         "Blood cultures × 2, broad-spectrum antibiotics within 1 hour, isolate patient.",
       ),

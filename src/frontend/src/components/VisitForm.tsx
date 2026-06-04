@@ -38,6 +38,7 @@ import PreviousInvestigationTable, {
 } from "./PreviousInvestigationTable";
 import QuestionStepper from "./QuestionStepper";
 import RespiratoryExam from "./RespiratoryExam";
+import SystemicExaminationSection from "./SystemicExaminationSection";
 import {
   loadFamilyHistoryRisk,
   saveFamilyHistoryRisk,
@@ -801,6 +802,20 @@ export default function VisitForm({
   const [cardiovascularExam, setCardiovascularExam] = useState<
     Record<string, unknown>
   >({});
+
+  const [systemicExamFindings, setSystemicExamFindings] = useState<
+    Record<string, unknown>
+  >({
+    cardiovascular: cardiovascularExam,
+    respiratory: respiratoryExam,
+    gastrointestinal: gastrointestinalExam,
+    neurological: neurologicalExam,
+    musculoskeletal: musculoskeletalExam,
+  });
+
+  const handleSystemicExamChange = (system: string, value: unknown) => {
+    setSystemicExamFindings((prev) => ({ ...prev, [system]: value }));
+  };
 
   // ─── Provisional / Final Diagnosis state ─────────────────────────────────
   const [diagnosisStatus, setDiagnosisStatus] = useState<
@@ -1660,7 +1675,7 @@ export default function VisitForm({
     if (formData.vital_signs?.pulse)
       vitalParts.push(`Pulse ${formData.vital_signs.pulse} beats/min`);
     if (formData.vital_signs?.temperature)
-      vitalParts.push(`Temp ${formData.vital_signs.temperature} °C`);
+      vitalParts.push(`Temp ${formData.vital_signs.temperature} °F`);
     if (formData.vital_signs?.respiratory_rate)
       vitalParts.push(
         `RR ${formData.vital_signs.respiratory_rate} breaths/min`,
@@ -2660,7 +2675,7 @@ export default function VisitForm({
           <div className="space-y-2">
             <Label className="text-sm font-semibold flex items-center gap-1">
               <Thermometer className="h-3.5 w-3.5 text-orange-500" />
-              Temperature <UnitBadge>°C</UnitBadge>
+              Temperature <UnitBadge>°F</UnitBadge>
             </Label>
             <Input
               type="number"
@@ -2877,6 +2892,10 @@ export default function VisitForm({
               </div>
             )}
           </div>
+          <SystemicExaminationSection
+            systemicExamFindings={systemicExamFindings}
+            onSystemicExamChange={handleSystemicExamChange}
+          />
           <Tabs defaultValue="cardiovascular">
             <TabsList className="flex flex-wrap w-full gap-1 h-auto">
               <TabsTrigger

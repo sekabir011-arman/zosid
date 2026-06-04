@@ -175,12 +175,12 @@ function vitalAlert(
     if (num > 38.5)
       return {
         status: "critical",
-        message: `Temp ${num}°C > 38.5°C (fever)`,
+        message: `Temp ${num}°F > 38.5°F (fever)`,
       };
     if (num < 36)
       return {
         status: "critical",
-        message: `Temp ${num}°C < 36°C (hypothermia)`,
+        message: `Temp ${num}°F < 36°F (hypothermia)`,
       };
   }
   if (key === "oxygenSaturation") {
@@ -638,7 +638,7 @@ function VitalsBar({
       key: "temperature",
       label: "Temp",
       value: vitals?.temperature || "—",
-      unit: "°C",
+      unit: "°F",
     },
     {
       key: "weight",
@@ -3164,7 +3164,7 @@ export default function PatientDashboardInner({
                         { key: "systolic", label: "Systolic BP (mmHg)" },
                         { key: "diastolic", label: "Diastolic BP (mmHg)" },
                         { key: "pulse", label: "Pulse (beats/min)" },
-                        { key: "temp", label: "Temperature (°C)" },
+                        { key: "temp", label: "Temperature (°F)" },
                         { key: "spo2", label: "SpO₂ (%)" },
                         { key: "weight", label: "Weight (kg)" },
                       ].map((f) => (
@@ -3286,7 +3286,7 @@ export default function PatientDashboardInner({
                   title="Temperature"
                   data={vitalsHistory}
                   dataKey="Temp"
-                  unit="°C"
+                  unit="°F"
                   color="#CA8A04"
                   bgClass="bg-yellow-50"
                   borderClass="border-yellow-200"

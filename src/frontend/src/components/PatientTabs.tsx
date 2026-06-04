@@ -356,7 +356,7 @@ function seedSOAPNotes(): SOAPNote[] {
       assessment:
         "Hypertension — well controlled. Chest tightness — improving with medication.",
       plan: "Continue Amlodipine 5mg OD. Increase Metformin to 1g BD. Follow up in 2 weeks. Cardiology referral as arranged.",
-      vitalsStrip: "BP 128/78 | HR 74 | SpO2 98% | Temp 36.8°C",
+      vitalsStrip: "BP 128/78 | HR 74 | SpO2 98% | Temp 36.8°F",
     },
     {
       id: "s2",

@@ -45,6 +45,7 @@ export interface SyncStatus {
   isOnline: boolean;
   pendingChanges: number;
   lastSyncAt?: Date;
+  canisterConnected: boolean;
 }
 
 export interface SyncConflict {
@@ -281,6 +282,7 @@ export function getSyncStatus(): SyncStatus {
     isOnline: isNetworkOnline(),
     pendingChanges: getPendingChangesCount(),
     lastSyncAt: getLastSyncAt(),
+    canisterConnected: false,
   };
 }
 
@@ -1096,7 +1098,7 @@ function _mergeQueueEntries(entries: Array<Record<string, unknown>>): void {
 let _isSyncing = false;
 
 /** Maximum retry attempts per queue item before it is marked as permanently failed */
-const MAX_ITEM_RETRY = 5;
+const MAX_ITEM_RETRY = 10;
 
 /**
  * Flush all pending local writes to the canister using bulk upsert calls.

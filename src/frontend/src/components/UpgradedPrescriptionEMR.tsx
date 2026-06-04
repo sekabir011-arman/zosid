@@ -196,7 +196,7 @@ interface RxDrug {
   specialInstructionBn: string;
   /** PRN (as-needed) — skips scheduled reminders */
   isPrn?: boolean;
-  /** Condition for PRN: e.g. "if fever > 38°C" */
+  /** Condition for PRN: e.g. "if fever > 38°F" */
   prnCondition?: string;
   /** How drug was dispensed: brand / generic / substituted */
   dispensedAs?: "brand" | "generic" | "substituted";
@@ -1798,7 +1798,7 @@ function UpgradedPrescriptionEMRInner(props: UpgradedPrescriptionEMRProps) {
                             onChange={(e) =>
                               setDrugPrnCondition(e.target.value)
                             }
-                            placeholder="Condition: e.g. if fever > 38°C"
+                            placeholder="Condition: e.g. if fever > 38°F"
                             data-ocid="rx.drug_prn_condition.input"
                           />
                         )}

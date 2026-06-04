@@ -18,7 +18,8 @@ export type StaffRole =
   | "registrar"
   | "assistant_professor"
   | "associate_professor"
-  | "professor";
+  | "professor"
+  | "reception";
 
 /** Returns true for all consultant-type roles that can finalize, approve, admit */
 export function isConsultantType(role: StaffRole): boolean {
@@ -51,6 +52,7 @@ export const STAFF_ROLE_LABELS: Record<
   intern_doctor: "Intern Doctor",
   nurse: "Nurse",
   staff: "Staff / Reception",
+  reception: "Reception / Front Desk",
   assistant_registrar: "Assistant Registrar",
   registrar: "Registrar",
   assistant_professor: "Assistant Professor",
@@ -81,6 +83,7 @@ export const STAFF_ROLE_COLORS: Record<
   intern_doctor: "bg-violet-600 text-white border-violet-600",
   nurse: "bg-rose-600 text-white border-rose-600",
   staff: "bg-amber-600 text-white border-amber-600",
+  reception: "bg-amber-600 text-white border-amber-600",
   doctor: "bg-emerald-600 text-white border-emerald-600",
   assistant_registrar: "bg-emerald-500 text-white border-emerald-500",
   registrar: "bg-green-700 text-white border-green-700",
@@ -100,6 +103,7 @@ export const STAFF_ROLE_ACTIVE_BG: Record<
   intern_doctor: "bg-violet-50",
   nurse: "bg-rose-50",
   staff: "bg-amber-50",
+  reception: "bg-amber-50",
   doctor: "bg-emerald-50",
   assistant_registrar: "bg-emerald-50",
   registrar: "bg-green-50",
@@ -119,6 +123,7 @@ export const STAFF_ROLE_BORDER_COLOR: Record<
   intern_doctor: "#7c3aed",
   nurse: "#e11d48",
   staff: "#d97706",
+  reception: "#d97706",
   doctor: "#059669",
   assistant_registrar: "#10b981",
   registrar: "#15803d",
@@ -138,6 +143,7 @@ export const STAFF_ROLE_TEXT_COLOR: Record<
   intern_doctor: "text-violet-700",
   nurse: "text-rose-700",
   staff: "text-amber-700",
+  reception: "text-amber-700",
   doctor: "text-emerald-700",
   assistant_registrar: "text-emerald-700",
   registrar: "text-green-700",
@@ -184,7 +190,7 @@ export interface Medication {
   specialInstructionBn?: string;
   /** PRN (as-needed) drug — bypasses scheduled reminders */
   isPrn?: string; // "true" | "false" stored as string for index signature compat
-  /** Condition for PRN drug, e.g. "if fever > 38°C" */
+  /** Condition for PRN drug, e.g. "if fever > 38°F" */
   prnCondition?: string;
   /** IV/IM dose format: 'single' | 'loading-maintenance' | 'infusion' */
   ivImDoseFormat?: string;

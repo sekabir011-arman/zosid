@@ -692,7 +692,7 @@ export default function DailyProgress({
               onChange={(e) =>
                 setForm((f) => ({ ...f, objective: e.target.value }))
               }
-              placeholder="BP: 120/80 mmHg, Pulse: 88 bpm, Temp: 37.2°C, SpO₂: 97%, Urine output: 50ml/hr..."
+              placeholder="BP: 120/80 mmHg, Pulse: 88 bpm, Temp: 37.2°F, SpO₂: 97%, Urine output: 50ml/hr..."
               rows={3}
               className="mt-1 border-teal-200 focus-visible:ring-teal-300"
               data-ocid="patient_dashboard.daily_progress.soap_objective"

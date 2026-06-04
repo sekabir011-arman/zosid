@@ -201,7 +201,7 @@ export default function ReferralLetter({
     if (v.bloodPressure) parts.push(`BP: ${v.bloodPressure} mmHg`);
     if (v.pulse) parts.push(`Pulse: ${v.pulse} bpm`);
     if (v.oxygenSaturation) parts.push(`SpO₂: ${v.oxygenSaturation}%`);
-    if (v.temperature) parts.push(`Temp: ${v.temperature}°C`);
+    if (v.temperature) parts.push(`Temp: ${v.temperature}°F`);
     if (v.respiratoryRate) parts.push(`RR: ${v.respiratoryRate}/min`);
     return parts.join(", ");
   }, [lastVisit]);

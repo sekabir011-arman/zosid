@@ -314,7 +314,7 @@ export default function PatientDashboard({
         <p><strong>Diagnosis:</strong> ${extData.diagnosis || visit.diagnosis || "—"}</p>
         <p><strong>Chief Complaint:</strong> ${visit.chiefComplaint || "—"}</p>
         ${extData.pastMedicalHistory ? `<p><strong>Past Medical History:</strong> ${extData.pastMedicalHistory}</p>` : ""}
-        ${extData.vitalSigns ? `<h3>Vital Signs</h3><p>BP: ${extData.vitalSigns.bloodPressure || "—"} <strong>mmHg</strong> | Pulse: ${extData.vitalSigns.pulse || "—"} <strong>beats/min</strong> | Temp: ${extData.vitalSigns.temperature || "—"} <strong>°C</strong> | SpO₂: ${extData.vitalSigns.oxygenSaturation || "—"} <strong>%</strong></p>` : ""}
+        ${extData.vitalSigns ? `<h3>Vital Signs</h3><p>BP: ${extData.vitalSigns.bloodPressure || "—"} <strong>mmHg</strong> | Pulse: ${extData.vitalSigns.pulse || "—"} <strong>beats/min</strong> | Temp: ${extData.vitalSigns.temperature || "—"} <strong>°F</strong> | SpO₂: ${extData.vitalSigns.oxygenSaturation || "—"} <strong>%</strong></p>` : ""}
         ${extData.salientFeatures ? `<h3>Clinical Summary</h3><p>${extData.salientFeatures}</p>` : ""}
       </body></html>`);
     win.document.close();

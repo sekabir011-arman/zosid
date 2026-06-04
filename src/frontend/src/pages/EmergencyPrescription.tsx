@@ -1926,7 +1926,7 @@ export default function EmergencyPrescription() {
                         ocid: "rbs",
                       },
                       {
-                        label: "Temp (°C)",
+                        label: "Temp (°F)",
                         val: vTemp,
                         set: setVTemp,
                         placeholder: "37.0",
@@ -2705,7 +2705,7 @@ export default function EmergencyPrescription() {
                       </label>
                       {dPrn && (
                         <Input
-                          placeholder="Condition (e.g. if fever > 38°C)"
+                          placeholder="Condition (e.g. if fever > 38°F)"
                           value={dPrnCond}
                           onChange={(e) => setDPrnCond(e.target.value)}
                           className="h-7 text-xs w-52"

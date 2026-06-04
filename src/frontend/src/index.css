@@ -4,6 +4,20 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("/assets/fonts/BricolageGrotesque.woff2") format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/assets/fonts/PlusJakartaSans.woff2") format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
 @layer base {
   :root {
     --background: 0.99 0 0;
@@ -55,6 +69,41 @@
     --clinical-oe: 0.58 0.19 10;
     --clinical-investigation: 0.6 0.15 170;
     --clinical-advice: 0.7 0.14 60;
+
+    --tab-procedures: 0.62 0.16 40;
+    --tab-complaints: 0.58 0.18 20;
+    --tab-advice: 0.7 0.14 60;
+    --tab-timeline: 0.62 0.15 130;
+    --tab-handover: 0.65 0.16 50;
+    --tab-referrals: 0.62 0.16 40;
+    --tab-soap: 0.55 0.15 160;
+    --tab-invpayment: 0.6 0.15 170;
+    --role-admin: 0.55 0.18 200;
+    --role-consultant: 0.55 0.18 200;
+    --role-professor: 0.55 0.18 200;
+    --role-mo: 0.6 0.15 170;
+    --role-registrar: 0.62 0.15 130;
+    --role-assistant-registrar: 0.65 0.16 50;
+    --role-intern: 0.65 0.16 50;
+    --role-nurse: 0.58 0.19 10;
+    --role-reception: 0.62 0.16 40;
+    --role-patient: 0.48 0.12 250;
+    --status-drafted: 0.6 0.15 170;
+    --status-pending: 0.7 0.14 60;
+    --status-verified: 0.7 0.18 150;
+    --status-rejected: 0.55 0.22 25;
+    --bed-available: 0.7 0.18 150;
+    --bed-occupied: 0.55 0.22 25;
+    --bed-reserved: 0.7 0.14 60;
+    --bed-cleaning: 0.55 0.18 200;
+    --round-no-note: 0.55 0.22 25;
+    --round-intern: 0.7 0.14 60;
+    --round-mo: 0.55 0.18 200;
+    --round-finalized: 0.7 0.18 150;
+    --alert-sepsis: 0.55 0.22 25;
+    --alert-aki: 0.65 0.18 60;
+    --alert-news2: 0.7 0.14 60;
+    --alert-normal: 0.7 0.18 150;
   }
 
   .dark {
@@ -93,6 +142,41 @@
     --clinical-oe: 0.68 0.19 10;
     --clinical-investigation: 0.7 0.15 170;
     --clinical-advice: 0.8 0.14 60;
+
+    --tab-procedures: 0.72 0.16 40;
+    --tab-complaints: 0.68 0.18 20;
+    --tab-advice: 0.8 0.14 60;
+    --tab-timeline: 0.72 0.15 130;
+    --tab-handover: 0.75 0.16 50;
+    --tab-referrals: 0.72 0.16 40;
+    --tab-soap: 0.65 0.15 160;
+    --tab-invpayment: 0.7 0.15 170;
+    --role-admin: 0.65 0.18 200;
+    --role-consultant: 0.65 0.18 200;
+    --role-professor: 0.65 0.18 200;
+    --role-mo: 0.7 0.15 170;
+    --role-registrar: 0.72 0.15 130;
+    --role-assistant-registrar: 0.75 0.16 50;
+    --role-intern: 0.75 0.16 50;
+    --role-nurse: 0.68 0.19 10;
+    --role-reception: 0.72 0.16 40;
+    --role-patient: 0.58 0.12 250;
+    --status-drafted: 0.7 0.15 170;
+    --status-pending: 0.8 0.14 60;
+    --status-verified: 0.8 0.18 150;
+    --status-rejected: 0.55 0.22 25;
+    --bed-available: 0.8 0.18 150;
+    --bed-occupied: 0.55 0.22 25;
+    --bed-reserved: 0.8 0.14 60;
+    --bed-cleaning: 0.65 0.18 200;
+    --round-no-note: 0.55 0.22 25;
+    --round-intern: 0.8 0.14 60;
+    --round-mo: 0.65 0.18 200;
+    --round-finalized: 0.8 0.18 150;
+    --alert-sepsis: 0.55 0.22 25;
+    --alert-aki: 0.75 0.18 60;
+    --alert-news2: 0.8 0.14 60;
+    --alert-normal: 0.8 0.18 150;
   }
 }
 

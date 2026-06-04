@@ -405,7 +405,100 @@ function ReceiptModal({
 
   function handlePrint() {
     saveReceiptToStore(receipt);
-    window.print();
+    const formatted = new Date(receipt.date).toLocaleDateString("en-BD", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    const pmLabel =
+      PAYMENT_METHODS.find((m) => m.value === receipt.paymentMethod)?.label ??
+      receipt.paymentMethod ??
+      "—";
+    const headerHtml = `<div style="text-align:center;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #1f2937">
+      <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:4px">
+        <div style="width:36px;height:36px;background:#15803d;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:900;font-size:16px;flex-shrink:0">A</div>
+        <div>
+          <div style="font-weight:900;font-size:18px;color:#111827">Dr. Arman Kabir's Care</div>
+          <div style="font-size:11px;color:#6b7280">Patient Management &amp; Clinical Portal</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:#9ca3af">University Dental College &amp; Hospital, Moghbazar, Dhaka</div>
+    </div>`;
+    const bodyHtml = `<div style="font-family:serif;color:#111827;max-width:480px;margin:0 auto">
+      <div style="text-align:center;margin-bottom:16px">
+        <h2 style="font-size:16px;font-weight:800;text-transform:uppercase;letter-spacing:2px;margin:0">Appointment Receipt</h2>
+        <p style="font-size:12px;color:#6b7280;margin:4px 0 0">অ্যাপয়েন্টমেন্ট রসিদ</p>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:#4b5563;margin-bottom:14px">
+        <div><strong>Receipt No:</strong> <span style="font-family:monospace">${receipt.receiptNumber}</span></div>
+        <div><strong>Date:</strong> ${formatted}</div>
+      </div>
+      <table style="width:100%;font-size:12px;margin-bottom:14px">
+        <tr><td style="color:#6b7280;padding-bottom:6px;width:40%">Patient / রোগী</td><td style="font-weight:700;padding-bottom:6px">${receipt.patientName}</td></tr>
+        <tr><td style="color:#6b7280;padding-bottom:6px">Register No.</td><td style="font-weight:700;font-family:monospace;padding-bottom:6px">${receipt.registerNumber || "—"}</td></tr>
+        <tr><td style="color:#6b7280;padding-bottom:6px">Doctor / ডাক্তার</td><td style="font-weight:700;padding-bottom:6px">${receipt.doctorName || "—"}</td></tr>
+        <tr><td style="color:#6b7280;padding-bottom:6px">Type / ধরন</td><td style="font-weight:700;padding-bottom:6px">${receipt.appointmentType ?? receipt.service ?? "—"}</td></tr>
+        <tr><td style="color:#6b7280;padding-bottom:6px">Payment / পেমেন্ট</td><td style="font-weight:700;padding-bottom:6px">${pmLabel}</td></tr>
+      </table>
+      <div style="border:2px solid #1f2937;border-radius:8px;padding:14px;margin-bottom:14px;text-align:center">
+        <p style="font-size:10px;text-transform:uppercase;font-weight:700;color:#6b7280;margin:0 0 6px">Consultation Fee / পরামর্শ ফি</p>
+        <p style="font-size:28px;font-weight:900;margin:0">৳ ${receipt.amount.toLocaleString("en-BD")}</p>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:18px;padding-top:12px;border-top:1px solid #d1d5db">
+        <div style="text-align:center">
+          <div style="border-bottom:1px solid #6b7280;width:120px;margin-bottom:4px"></div>
+          <p style="font-size:10px;color:#6b7280;margin:0">Patient Signature</p>
+        </div>
+        <div style="text-align:center">
+          <div style="border-bottom:1px solid #6b7280;width:120px;margin-bottom:4px"></div>
+          <p style="font-size:10px;color:#6b7280;margin:0">Authorized Signature</p>
+        </div>
+      </div>
+      <p style="text-align:center;font-size:10px;color:#9ca3af;margin-top:14px">Computer-generated receipt — Dr. Arman Kabir's Care</p>
+    </div>`;
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Receipt ${receipt.receiptNumber}</title><style>
+      @page { size: A5 portrait; margin: 8mm; }
+      * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      body { margin: 0; padding: 0; font-family: serif; background: white; }
+    </style></head><body>${headerHtml}${bodyHtml}</body></html>`;
+    const stale = document.getElementById("_apt_receipt_print_iframe");
+    if (stale) stale.remove();
+    const iframe = document.createElement("iframe");
+    iframe.id = "_apt_receipt_print_iframe";
+    iframe.style.cssText =
+      "position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:0;opacity:0";
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument ?? iframe.contentWindow?.document;
+    if (!doc) {
+      document.body.removeChild(iframe);
+      return;
+    }
+    function doPrint() {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch {}
+      if (iframe.contentWindow) {
+        iframe.contentWindow.addEventListener(
+          "afterprint",
+          () => {
+            if (document.body.contains(iframe))
+              document.body.removeChild(iframe);
+          },
+          { once: true },
+        );
+      }
+      setTimeout(() => {
+        if (document.body.contains(iframe)) document.body.removeChild(iframe);
+      }, 30000);
+    }
+    doc.open();
+    doc.write(html);
+    doc.close();
+    iframe.onload = () => doPrint();
+    setTimeout(() => {
+      if (document.body.contains(iframe)) doPrint();
+    }, 500);
   }
 
   async function handleDownload() {

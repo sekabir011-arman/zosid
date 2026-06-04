@@ -49,6 +49,7 @@ import type { Prescription, StaffRole, VitalSigns } from "../types";
 import { STAFF_ROLE_LABELS } from "../types";
 import DrainMonitor from "./DrainMonitor";
 import IOChart from "./IOChart";
+import SystemicExaminationSection from "./SystemicExaminationSection";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -657,7 +658,7 @@ export default function DailyProgressNote({
       ? [
           latestVitals.bloodPressure && `BP ${latestVitals.bloodPressure}`,
           latestVitals.pulse && `Pulse ${latestVitals.pulse}`,
-          latestVitals.temperature && `Temp ${latestVitals.temperature}°C`,
+          latestVitals.temperature && `Temp ${latestVitals.temperature}°F`,
           latestVitals.oxygenSaturation &&
             `SpO₂ ${latestVitals.oxygenSaturation}%`,
         ]
@@ -1214,7 +1215,7 @@ export default function DailyProgressNote({
                   value: latestVitals?.oxygenSaturation,
                   unit: "%",
                 },
-                { label: "Temp", value: latestVitals?.temperature, unit: "°C" },
+                { label: "Temp", value: latestVitals?.temperature, unit: "°F" },
               ].map(({ label, value, unit }) => (
                 <div
                   key={label}
@@ -1273,6 +1274,34 @@ export default function DailyProgressNote({
                 Same as yesterday
               </button>
             </div>
+            <SystemicExaminationSection
+              systemicExamFindings={Object.fromEntries(
+                (note.examSystems || []).map(
+                  (s: { name: string; findings: string }) => [
+                    s.name.toLowerCase(),
+                    s.findings,
+                  ],
+                ),
+              )}
+              onSystemicExamChange={(system, value) => {
+                const updatedSystems = [...(note.examSystems || [])];
+                const idx = updatedSystems.findIndex(
+                  (s) => s.name.toLowerCase() === system,
+                );
+                if (idx >= 0) {
+                  updatedSystems[idx] = {
+                    ...updatedSystems[idx],
+                    findings: String(value),
+                  };
+                } else {
+                  updatedSystems.push({
+                    name: system,
+                    findings: String(value),
+                  });
+                }
+                updateNote({ examSystems: updatedSystems });
+              }}
+            />
             {note.examSystems.map((sys, i) => (
               <div key={sys.name} className="space-y-1">
                 <Label className="text-xs font-semibold text-foreground">

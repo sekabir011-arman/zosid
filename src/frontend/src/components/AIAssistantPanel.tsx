@@ -214,7 +214,7 @@ function generatePatientSummary(
     ? [
         `BP ${latestVitals.bloodPressure || "—"} mmHg`,
         `Pulse ${latestVitals.pulse || "—"} beats/min`,
-        `Temp ${latestVitals.temperature || "—"}°C`,
+        `Temp ${latestVitals.temperature || "—"}°F`,
         `SpO₂ ${latestVitals.oxygenSaturation || "—"}%`,
       ]
         .join(", ")
@@ -252,7 +252,7 @@ function generateSOAPDraft(
   latestVisit: Visit | null,
 ): string {
   const vitalsText = latestVitals
-    ? `BP: ${latestVitals.bloodPressure || "—"} mmHg | Pulse: ${latestVitals.pulse || "—"} beats/min | Temp: ${latestVitals.temperature || "—"}°C | SpO₂: ${latestVitals.oxygenSaturation || "—"}%`
+    ? `BP: ${latestVitals.bloodPressure || "—"} mmHg | Pulse: ${latestVitals.pulse || "—"} beats/min | Temp: ${latestVitals.temperature || "—"}°F | SpO₂: ${latestVitals.oxygenSaturation || "—"}%`
     : "Vitals not available";
   return [
     `S (Subjective): ${latestVisit?.chiefComplaint ?? "Patient complaints not recorded today."}`,
