@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
+import jwt, { type JwtPayload } from 'jsonwebtoken';
 
 export interface AuthenticatedRequest extends Request {
   userId?: string;
@@ -14,10 +14,11 @@ export function authMiddleware(req: AuthenticatedRequest, res: Response, next: N
     }
 
     const token = authHeader.slice(7);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret') as any;
+    const jwtSecret = process.env.JWT_SECRET || 'secret';
+    const decoded = jwt.verify(token, jwtSecret as jwt.Secret) as JwtPayload;
 
-    req.userId = decoded.sub;
-    req.userRole = decoded.role;
+    req.userId = decoded.sub as string | undefined;
+    req.userRole = decoded.role as string | undefined;
 
     next();
   } catch (error) {

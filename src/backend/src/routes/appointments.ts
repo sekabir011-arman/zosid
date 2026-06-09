@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { getSupabaseClient } from '../lib/supabase.js';
+import { camelToSnake, snakeToCamel } from '../lib/transform.js';
 import { authMiddleware, AuthenticatedRequest, requireRole } from '../middleware/auth.js';
 import { z } from 'zod';
 
-const router = Router();
+const router: import('express').Router = Router();
 
 const AppointmentSchema = z.object({
   patientId: z.string(),
@@ -21,11 +22,11 @@ router.get('/patient/:patientId', async (req: AuthenticatedRequest, res) => {
     const { data, error } = await supabase
       .from('appointments')
       .select('*')
-      .eq('patientId', req.params.patientId)
-      .order('appointmentDate', { ascending: true });
+      .eq('patient_id', req.params.patientId)
+      .order('appointment_date', { ascending: true });
 
     if (error) throw error;
-    res.json(data);
+    res.json(data ? snakeToCamel(data) : data);
   } catch (error: any) {
     res.status(500).json({ error: error.message, code: 'DATABASE_ERROR' });
   }
@@ -40,16 +41,16 @@ router.post('/', requireRole('reception', 'medical_officer', 'consultant'), asyn
     const { data: newAppointment, error } = await supabase
       .from('appointments')
       .insert([
-        {
+        camelToSnake({
           ...data,
           status: 'scheduled',
-        },
+        }) as any,
       ])
       .select()
       .single();
 
     if (error) throw error;
-    res.status(201).json(newAppointment);
+    res.status(201).json(newAppointment ? snakeToCamel(newAppointment) : newAppointment);
   } catch (error: any) {
     res.status(400).json({ error: error.message, code: 'VALIDATION_ERROR' });
   }
@@ -63,7 +64,7 @@ router.patch('/:id/status', requireRole('reception', 'medical_officer', 'consult
 
     const { data, error } = await supabase
       .from('appointments')
-      .update({ status })
+      .update({ status } as any)
       .eq('id', req.params.id)
       .select()
       .single();
@@ -71,7 +72,7 @@ router.patch('/:id/status', requireRole('reception', 'medical_officer', 'consult
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Appointment not found', code: 'NOT_FOUND' });
 
-    res.json(data);
+    res.json(snakeToCamel(data));
   } catch (error: any) {
     res.status(400).json({ error: error.message, code: 'VALIDATION_ERROR' });
   }

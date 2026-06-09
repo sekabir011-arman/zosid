@@ -136,7 +136,7 @@ function InvestigationReceiptDoc({
       )}
 
       {/* Header */}
-      <div className="text-center mb-6 border-b-2 border-gray-800 pb-4">
+      <div className="receipt-header text-center mb-6 border-b-2 border-gray-800 pb-4">
         <div className="flex items-center justify-center gap-2 mb-1">
           <div className="w-10 h-10 bg-blue-700 rounded-full flex items-center justify-center text-white font-black text-lg">
             A
@@ -601,9 +601,27 @@ function NewPaymentView({
 }) {
   const rates = loadInvestigationRates();
   const [selected, setSelected] = useState<
-    Record<string, { checked: boolean; qty: number }>
+    Record<
+      string,
+      {
+        checked: boolean;
+        qty: number;
+        unitRate: number;
+        discountRate: number;
+      }
+    >
   >(() =>
-    Object.fromEntries(rates.map((r) => [r.id, { checked: false, qty: 1 }])),
+    Object.fromEntries(
+      rates.map((r) => [
+        r.id,
+        {
+          checked: false,
+          qty: 1,
+          unitRate: r.rate,
+          discountRate: r.discountRate ?? 0,
+        },
+      ]),
+    ),
   );
   const [discountRate, setDiscountRate] = useState(0);
   const [finalOverride, setFinalOverride] = useState<string>("");
@@ -654,10 +672,18 @@ function NewPaymentView({
   ];
 
   const checkedRates = mergedRates.filter((r) => selected[r.id]?.checked);
-  const subtotal = checkedRates.reduce(
-    (sum, r) => sum + r.rate * (selected[r.id]?.qty ?? 1),
-    0,
-  );
+  const subtotal = checkedRates.reduce((sum, r) => {
+    const selection = selected[r.id] ?? {
+      checked: false,
+      qty: 1,
+      unitRate: r.rate,
+      discountRate: r.discountRate ?? 0,
+    };
+    const lineTotal = Math.round(
+      selection.unitRate * selection.qty * (1 - selection.discountRate / 100),
+    );
+    return sum + lineTotal;
+  }, 0);
   const autoFinal = Math.round(subtotal * (1 - discountRate / 100));
   const finalAmount = finalOverride !== "" ? Number(finalOverride) : autoFinal;
   const effectiveDiscount =
@@ -681,18 +707,47 @@ function NewPaymentView({
   }
 
   function handleToggle(id: string) {
+    const rate = mergedRates.find((r) => r.id === id);
     setSelected((prev) => ({
       ...prev,
       [id]: {
-        ...prev[id],
         checked: !prev[id]?.checked,
         qty: prev[id]?.qty ?? 1,
+        unitRate: prev[id]?.unitRate ?? rate?.rate ?? 0,
+        discountRate:
+          prev[id]?.discountRate ?? rate?.discountRate ?? 0,
       },
     }));
   }
 
   function handleQty(id: string, qty: number) {
-    setSelected((prev) => ({ ...prev, [id]: { ...prev[id], qty } }));
+    setSelected((prev) => ({
+      ...prev,
+      [id]: {
+        ...prev[id],
+        qty,
+      },
+    }));
+  }
+
+  function handleUnitRate(id: string, rate: number) {
+    setSelected((prev) => ({
+      ...prev,
+      [id]: {
+        ...prev[id],
+        unitRate: rate,
+      },
+    }));
+  }
+
+  function handleItemDiscount(id: string, discountRate: number) {
+    setSelected((prev) => ({
+      ...prev,
+      [id]: {
+        ...prev[id],
+        discountRate,
+      },
+    }));
   }
 
   function handleGenerateInvoice() {
@@ -709,8 +764,21 @@ function NewPaymentView({
       return;
     }
     const investigations: InvestigationLineItem[] = checkedRates.map((r) => {
-      const qty = selected[r.id]?.qty ?? 1;
-      return { name: r.name, qty, unitRate: r.rate, amount: r.rate * qty };
+      const selection = selected[r.id] ?? {
+        qty: 1,
+        unitRate: r.rate,
+        discountRate: r.discountRate ?? 0,
+      };
+      const amount = Math.round(
+        selection.unitRate * selection.qty * (1 - selection.discountRate / 100),
+      );
+      return {
+        name: r.name,
+        qty: selection.qty,
+        unitRate: selection.unitRate,
+        discountRate: selection.discountRate,
+        amount,
+      };
     });
 
     const paid = !isPartial;
@@ -809,16 +877,29 @@ function NewPaymentView({
             </thead>
             <tbody>
               {checkedRates.map((r) => {
-                const qty = selected[r.id]?.qty ?? 1;
+                const selection = selected[r.id] ?? {
+                  qty: 1,
+                  unitRate: r.rate,
+                  discountRate: r.discountRate ?? 0,
+                };
+                const amount = Math.round(
+                  selection.unitRate * selection.qty *
+                    (1 - selection.discountRate / 100),
+                );
                 return (
                   <tr key={r.id} className="border-t border-blue-100">
                     <td className="px-3 py-2 text-gray-800">{r.name}</td>
-                    <td className="px-2 py-2 text-center">{qty}</td>
+                    <td className="px-2 py-2 text-center">{selection.qty}</td>
                     <td className="px-3 py-2 text-right">
-                      ৳{r.rate.toLocaleString("en-BD")}
+                      ৳{selection.unitRate.toLocaleString("en-BD")}
+                      {selection.discountRate > 0 ? (
+                        <div className="text-[10px] text-emerald-700">
+                          −{selection.discountRate}%
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-3 py-2 text-right font-semibold">
-                      ৳{(r.rate * qty).toLocaleString("en-BD")}
+                      ৳{amount.toLocaleString("en-BD")}
                     </td>
                   </tr>
                 );
@@ -888,49 +969,104 @@ function NewPaymentView({
         </div>
         <div className="divide-y divide-border max-h-72 overflow-y-auto">
           {mergedRates.map((rate, idx) => {
-            const s = selected[rate.id] ?? { checked: false, qty: 1 };
-            const lineAmt = s.checked ? rate.rate * (s.qty || 1) : null;
+            const s = selected[rate.id] ?? {
+              checked: false,
+              qty: 1,
+              unitRate: rate.rate,
+              discountRate: rate.discountRate ?? 0,
+            };
+            const lineAmt = s.checked
+              ? Math.round(
+                  s.unitRate * (s.qty || 1) * (1 - s.discountRate / 100),
+                )
+              : null;
             return (
               <div
                 key={rate.id}
-                className={`flex items-center gap-3 px-4 py-3 transition-colors ${s.checked ? "bg-purple-50" : "hover:bg-muted/20"}`}
+                className={`border-b border-border last:border-0 ${
+                  s.checked ? "bg-purple-50" : "hover:bg-muted/20"
+                } transition-colors`}
                 data-ocid={`inv_payment.item.${idx + 1}`}
               >
-                <Checkbox
-                  id={`inv-${rate.id}`}
-                  checked={s.checked}
-                  onCheckedChange={() => handleToggle(rate.id)}
-                  data-ocid={`inv_payment.checkbox.${idx + 1}`}
-                />
-                <label
-                  htmlFor={`inv-${rate.id}`}
-                  className="flex-1 text-sm font-medium text-foreground cursor-pointer select-none"
-                >
-                  {rate.name}
-                </label>
-                {s.checked && (
-                  <Input
-                    type="number"
-                    min={1}
-                    value={s.qty}
-                    onChange={(e) =>
-                      handleQty(
-                        rate.id,
-                        Math.max(1, Number(e.target.value) || 1),
-                      )
-                    }
-                    className="w-16 h-7 text-xs text-center"
-                    aria-label="Quantity"
+                <div className="flex items-center gap-3 px-4 py-3">
+                  <Checkbox
+                    id={`inv-${rate.id}`}
+                    checked={s.checked}
+                    onCheckedChange={() => handleToggle(rate.id)}
+                    data-ocid={`inv_payment.checkbox.${idx + 1}`}
                   />
+                  <label
+                    htmlFor={`inv-${rate.id}`}
+                    className="flex-1 text-sm font-medium text-foreground cursor-pointer select-none"
+                  >
+                    {rate.name}
+                  </label>
+                  {s.checked && (
+                    <Input
+                      type="number"
+                      min={1}
+                      value={s.qty}
+                      onChange={(e) =>
+                        handleQty(
+                          rate.id,
+                          Math.max(1, Number(e.target.value) || 1),
+                        )
+                      }
+                      className="w-16 h-7 text-xs text-center"
+                      aria-label="Quantity"
+                    />
+                  )}
+                  <span
+                    className={`text-sm font-semibold tabular-nums ${
+                      s.checked ? "text-purple-700" : "text-muted-foreground"
+                    }`}
+                  >
+                    {s.checked && lineAmt != null
+                      ? `৳ ${lineAmt.toLocaleString("en-BD")}`
+                      : `৳ ${rate.rate.toLocaleString("en-BD")}`}
+                  </span>
+                </div>
+                {s.checked && (
+                  <div className="px-14 pb-3 grid grid-cols-2 gap-3 text-xs text-muted-foreground">
+                    <label className="flex items-center gap-2">
+                      <span className="whitespace-nowrap">Rate (৳)</span>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={s.unitRate}
+                        onChange={(e) =>
+                          handleUnitRate(
+                            rate.id,
+                            Math.max(0, Number(e.target.value) || 0),
+                          )
+                        }
+                        className="w-24 h-8 text-xs"
+                        data-ocid={`inv_payment.rate_override.${idx + 1}`}
+                      />
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <span className="whitespace-nowrap">Discount (%)</span>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={0.5}
+                        value={s.discountRate}
+                        onChange={(e) =>
+                          handleItemDiscount(
+                            rate.id,
+                            Math.max(
+                              0,
+                              Math.min(100, Number(e.target.value) || 0),
+                            ),
+                          )
+                        }
+                        className="w-20 h-8 text-xs"
+                        data-ocid={`inv_payment.item_discount.${idx + 1}`}
+                      />
+                    </label>
+                  </div>
                 )}
-                <span
-                  className={`text-sm font-semibold tabular-nums ${s.checked ? "text-purple-700" : "text-muted-foreground"}`}
-                >
-                  ৳{" "}
-                  {s.checked && lineAmt != null
-                    ? lineAmt.toLocaleString("en-BD")
-                    : rate.rate.toLocaleString("en-BD")}
-                </span>
               </div>
             );
           })}

@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { getSupabaseClient } from '../lib/supabase.js';
 import { authMiddleware, AuthenticatedRequest, requireRole } from '../middleware/auth.js';
+import { camelToSnake, snakeToCamel } from '../lib/transform.js';
 import { z } from 'zod';
 
-const router = Router();
+const router: import('express').Router = Router();
 
 const PatientSchema = z.object({
   firstName: z.string(),
@@ -18,6 +19,7 @@ const PatientSchema = z.object({
   zipCode: z.string(),
   bloodGroup: z.string().optional(),
   allergies: z.array(z.string()).optional(),
+  pastSurgicalHistory: z.string().optional(),
   medicalHistory: z.array(z.string()).optional(),
 });
 
@@ -25,10 +27,10 @@ const PatientSchema = z.object({
 router.get('/', async (req: AuthenticatedRequest, res) => {
   try {
     const supabase = getSupabaseClient();
-    const { data, error } = await supabase.from('patients').select('*').order('createdAt', { ascending: false });
+    const { data, error } = await supabase.from('patients').select('*').order('created_at', { ascending: false });
 
     if (error) throw error;
-    res.json(data);
+    res.json(data ? snakeToCamel(data) : data);
   } catch (error: any) {
     res.status(500).json({ error: error.message, code: 'DATABASE_ERROR' });
   }
@@ -43,7 +45,7 @@ router.get('/:id', async (req: AuthenticatedRequest, res) => {
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Patient not found', code: 'NOT_FOUND' });
 
-    res.json(data);
+    res.json(snakeToCamel(data));
   } catch (error: any) {
     res.status(500).json({ error: error.message, code: 'DATABASE_ERROR' });
   }
@@ -55,10 +57,18 @@ router.post('/', requireRole('admin', 'reception', 'medical_officer'), async (re
     const data = PatientSchema.parse(req.body);
     const supabase = getSupabaseClient();
 
-    const { data: newPatient, error } = await supabase.from('patients').insert([data]).select().single();
+    const payload = {
+      ...data,
+      pastSurgicalHistory:
+        data.pastSurgicalHistory ??
+        (data.medicalHistory ? data.medicalHistory.join(', ') : undefined),
+    } as any;
+    delete payload.medicalHistory;
+
+    const { data: newPatient, error } = await supabase.from('patients').insert([camelToSnake(payload) as any]).select().single();
 
     if (error) throw error;
-    res.status(201).json(newPatient);
+    res.status(201).json(newPatient ? snakeToCamel(newPatient) : newPatient);
   } catch (error: any) {
     res.status(400).json({ error: error.message, code: 'VALIDATION_ERROR' });
   }
@@ -70,9 +80,17 @@ router.put('/:id', requireRole('admin', 'reception', 'medical_officer'), async (
     const data = PatientSchema.partial().parse(req.body);
     const supabase = getSupabaseClient();
 
+    const payload = {
+      ...data,
+      pastSurgicalHistory:
+        data.pastSurgicalHistory ??
+        (data.medicalHistory ? data.medicalHistory.join(', ') : undefined),
+    } as any;
+    delete payload.medicalHistory;
+
     const { data: updatedPatient, error } = await supabase
       .from('patients')
-      .update(data)
+      .update(camelToSnake(payload) as any)
       .eq('id', req.params.id)
       .select()
       .single();
@@ -80,7 +98,7 @@ router.put('/:id', requireRole('admin', 'reception', 'medical_officer'), async (
     if (error) throw error;
     if (!updatedPatient) return res.status(404).json({ error: 'Patient not found', code: 'NOT_FOUND' });
 
-    res.json(updatedPatient);
+    res.json(snakeToCamel(updatedPatient));
   } catch (error: any) {
     res.status(400).json({ error: error.message, code: 'VALIDATION_ERROR' });
   }

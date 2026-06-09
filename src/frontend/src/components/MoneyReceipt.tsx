@@ -180,6 +180,13 @@ interface DownloadOptionsDialogProps {
   onClose: () => void;
 }
 
+export function stripReceiptHeaderHtml(html: string) {
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = html;
+  wrapper.querySelectorAll(".receipt-header").forEach((node) => node.remove());
+  return wrapper.innerHTML;
+}
+
 export function DownloadOptionsDialog({
   receiptNumber,
   onDownload,
@@ -736,7 +743,8 @@ export default function MoneyReceipt({
               <div style="font-size:12px;color:#9ca3af">University Dental College &amp; Hospital, Moghbazar, Dhaka</div>
             </div>`;
             const el = printRef.current;
-            const bodyHtml = el ? el.innerHTML : "";
+            const rawBodyHtml = el ? el.innerHTML : "";
+            const bodyHtml = stripReceiptHeaderHtml(rawBodyHtml);
             triggerReceiptPrint({
               bodyHtml,
               headerHtml,
@@ -865,7 +873,7 @@ export default function MoneyReceipt({
                 )}
 
                 {/* Header */}
-                <div className="text-center mb-6 border-b-2 border-gray-800 pb-4">
+                <div className="receipt-header text-center mb-6 border-b-2 border-gray-800 pb-4">
                   <div className="flex items-center justify-center gap-2 mb-1">
                     <div className="w-10 h-10 bg-blue-700 rounded-full flex items-center justify-center text-white font-black text-lg">
                       A

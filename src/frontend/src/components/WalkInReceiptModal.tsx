@@ -104,6 +104,7 @@ function WalkInReceiptDoc({
 
       {/* ====== PROMINENT RECEIPT HEADER ====== */}
       <div
+        className="receipt-header"
         style={{
           background: "linear-gradient(135deg, #1d4ed8 0%, #7c3aed 100%)",
           padding: "20px 24px 16px",
@@ -665,7 +666,8 @@ export default function WalkInReceiptModal({
         </div>
       </div>
     </div>`;
-    const bodyHtml = printRef.current ? printRef.current.innerHTML : "";
+    const rawBodyHtml = printRef.current ? printRef.current.innerHTML : "";
+    const bodyHtml = stripReceiptHeaderHtml(rawBodyHtml);
     triggerReceiptPrint({
       bodyHtml,
       headerHtml,

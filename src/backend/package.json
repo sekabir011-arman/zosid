@@ -14,7 +14,9 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
     "@supabase/supabase-js": "^2.38.0",
+    "@types/cors": "^2.8.14",
     "@types/express": "^4.17.17",
+    "@types/jsonwebtoken": "^9.0.2",
     "@types/node": "^20.9.0",
     "typescript": "^5.8.3",
     "tsx": "^4.7.0"

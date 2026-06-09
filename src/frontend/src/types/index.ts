@@ -781,6 +781,7 @@ export interface InvestigationLineItem {
   name: string;
   qty: number;
   unitRate: number;
+  discountRate?: number;
   amount: number;
 }
 

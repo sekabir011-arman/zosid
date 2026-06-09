@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { getSupabaseClient } from '../lib/supabase.js';
+import { camelToSnake, snakeToCamel } from '../lib/transform.js';
 import { authMiddleware, AuthenticatedRequest, requireRole } from '../middleware/auth.js';
 import { z } from 'zod';
 
-const router = Router();
+const router: import('express').Router = Router();
 
 const VitalsSchema = z.object({
   patientId: z.string(),
@@ -23,11 +24,11 @@ router.get('/patient/:patientId', async (req: AuthenticatedRequest, res) => {
     const { data, error } = await supabase
       .from('vitals')
       .select('*')
-      .eq('patientId', req.params.patientId)
-      .order('recordedAt', { ascending: false });
+      .eq('patient_id', req.params.patientId)
+      .order('recorded_at', { ascending: false });
 
     if (error) throw error;
-    res.json(data);
+    res.json(data ? snakeToCamel(data) : data);
   } catch (error: any) {
     res.status(500).json({ error: error.message, code: 'DATABASE_ERROR' });
   }
@@ -42,17 +43,17 @@ router.post('/', requireRole('nurse', 'medical_officer', 'registrar'), async (re
     const { data: newVitals, error } = await supabase
       .from('vitals')
       .insert([
-        {
+        camelToSnake({
           ...data,
           recordedBy: req.userId,
           status: 'drafted',
-        },
+        }) as any,
       ])
       .select()
       .single();
 
     if (error) throw error;
-    res.status(201).json(newVitals);
+    res.status(201).json(newVitals ? snakeToCamel(newVitals) : newVitals);
   } catch (error: any) {
     res.status(400).json({ error: error.message, code: 'VALIDATION_ERROR' });
   }
@@ -66,7 +67,7 @@ router.patch('/:id/verify', requireRole('medical_officer', 'registrar', 'consult
 
     const { data, error } = await supabase
       .from('vitals')
-      .update({ status })
+      .update({ status } as any)
       .eq('id', req.params.id)
       .select()
       .single();
@@ -74,7 +75,7 @@ router.patch('/:id/verify', requireRole('medical_officer', 'registrar', 'consult
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Vitals not found', code: 'NOT_FOUND' });
 
-    res.json(data);
+    res.json(snakeToCamel(data));
   } catch (error: any) {
     res.status(400).json({ error: error.message, code: 'VALIDATION_ERROR' });
   }

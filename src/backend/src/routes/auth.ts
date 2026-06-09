@@ -1,9 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { getSupabaseClient } from '../lib/supabase.js';
-import jwt from 'jsonwebtoken';
+import jwt, { type JwtPayload, type SignOptions } from 'jsonwebtoken';
 import { z } from 'zod';
 
-const router = Router();
+const router: import('express').Router = Router();
 
 const AuthSchema = z.object({
   email: z.string().email(),
@@ -41,7 +41,7 @@ router.post('/signup', async (req: Request, res: Response) => {
         email: data.email,
         name: data.name,
         role: data.role,
-      },
+      } as any,
     ]);
 
     if (profileError) {
@@ -49,10 +49,11 @@ router.post('/signup', async (req: Request, res: Response) => {
     }
 
     // Generate JWT
+    const jwtSecret = process.env.JWT_SECRET || 'secret';
     const token = jwt.sign(
       { sub: authData.user.id, email: data.email, role: data.role },
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: process.env.JWT_EXPIRY || '7d' }
+      jwtSecret as jwt.Secret,
+      { expiresIn: process.env.JWT_EXPIRY || '7d' } as any,
     );
 
     res.json({
@@ -87,21 +88,22 @@ router.post('/login', async (req: Request, res: Response) => {
     }
 
     // Get user profile
-    const { data: userProfile, error: profileError } = await supabase
+    const { data: userProfile, error: profileError } = (await supabase
       .from('users')
       .select('*')
       .eq('id', authData.user.id)
-      .single();
+      .single()) as any;
 
     if (profileError || !userProfile) {
       return res.status(404).json({ error: 'User profile not found', code: 'PROFILE_NOT_FOUND' });
     }
 
     // Generate JWT
+    const jwtSecret = process.env.JWT_SECRET || 'secret';
     const token = jwt.sign(
       { sub: authData.user.id, email: userProfile.email, role: userProfile.role },
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: process.env.JWT_EXPIRY || '7d' }
+      jwtSecret as jwt.Secret,
+      { expiresIn: process.env.JWT_EXPIRY || '7d' } as any,
     );
 
     res.json({

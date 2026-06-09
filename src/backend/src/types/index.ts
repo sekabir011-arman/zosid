@@ -21,7 +21,7 @@ export interface Patient {
   zipCode: string;
   bloodGroup?: string;
   allergies?: string[];
-  medicalHistory?: string[];
+  pastSurgicalHistory?: string;
   createdAt: Date;
   updatedAt: Date;
 }
