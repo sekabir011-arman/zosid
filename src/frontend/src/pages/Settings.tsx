@@ -56,6 +56,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { loadInvestigationRates } from "../components/InvestigationPayment";
+import { getSupabaseSessionToken } from "../lib/supabase";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import {
   type DoctorAccount,
@@ -1854,7 +1855,7 @@ function SerialDisplayVideoSettings({ doctorEmail }: { doctorEmail: string }) {
 
   const persistBackendConfig = async (nextConfig: Record<string, string>) => {
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = await getSupabaseSessionToken();
       if (!token) {
         return;
       }

@@ -25,7 +25,7 @@ export const useSerialQueue = () => {
     setLoading(true);
     setError(null);
     try {
-      const token = getToken();
+      const token = await getToken();
       const response = await fetch(`${API_BASE}/api/serial-queue/today`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -44,7 +44,7 @@ export const useSerialQueue = () => {
     setLoading(true);
     setError(null);
     try {
-      const token = getToken();
+      const token = await getToken();
       const response = await fetch(`${API_BASE}/api/serial-queue/date/${date}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -62,7 +62,7 @@ export const useSerialQueue = () => {
   const addEntry = useCallback(
     async (entry: Omit<SerialQueueEntry, 'id' | 'addedAt'>) => {
       try {
-        const token = getToken();
+        const token = await getToken();
         const response = await fetch(`${API_BASE}/api/serial-queue`, {
           method: 'POST',
           headers: {
@@ -87,7 +87,7 @@ export const useSerialQueue = () => {
   const updateStatus = useCallback(
     async (id: string, status: string, calledAt?: string) => {
       try {
-        const token = getToken();
+        const token = await getToken();
         const response = await fetch(`${API_BASE}/api/serial-queue/${id}`, {
           method: 'PATCH',
           headers: {
@@ -112,7 +112,7 @@ export const useSerialQueue = () => {
   const deleteEntry = useCallback(
     async (id: string) => {
       try {
-        const token = getToken();
+        const token = await getToken();
         const response = await fetch(`${API_BASE}/api/serial-queue/${id}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` },
@@ -131,7 +131,7 @@ export const useSerialQueue = () => {
   const resetQueue = useCallback(
     async (date: string) => {
       try {
-        const token = getToken();
+        const token = await getToken();
         const response = await fetch(`${API_BASE}/api/serial-queue/date/${date}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` },

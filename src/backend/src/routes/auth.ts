@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getSupabaseClient } from '../lib/supabase.js';
+import { getSupabaseAuthClient, getSupabaseClient } from '../lib/supabase.js';
 import jwt, { type JwtPayload, type SignOptions } from 'jsonwebtoken';
 import { z } from 'zod';
 
@@ -96,10 +96,10 @@ router.post('/signup', async (req: Request, res: Response) => {
 router.post('/login', async (req: Request, res: Response) => {
   try {
     const data = AuthSchema.parse(req.body);
-    const supabase = getSupabaseClient();
+    const authClient = getSupabaseAuthClient();
 
     // Authenticate with Supabase
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+    const { data: authData, error: authError } = await authClient.auth.signInWithPassword({
       email: data.email,
       password: data.password,
     });
@@ -108,8 +108,10 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Invalid credentials', code: 'INVALID_CREDENTIALS' });
     }
 
-    // Get user profile
-    const { data: userProfile, error: profileError } = (await supabase
+    const adminClient = getSupabaseClient();
+
+    // Get user profile using the service-role client so RLS does not interfere with auth lookups.
+    const { data: userProfile, error: profileError } = (await adminClient
       .from('users')
       .select('*')
       .eq('id', authData.user.id)

@@ -1,20 +1,18 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
-import { initializeSupabase } from './lib/supabase.js';
-import authRoutes from './routes/auth.js';
-import patientsRoutes from './routes/patients.js';
-import vitalsRoutes from './routes/vitals.js';
-import appointmentsRoutes from './routes/appointments.js';
-import prescriptionsRoutes from './routes/prescriptions.js';
-import nurseAssignmentsRoutes from './routes/nurseAssignments.js';
-import configRoutes from './routes/config.js';
-import serialQueueRoutes from './routes/serialQueue.js';
-import receiptsRoutes from './routes/receipts.js';
-import publicBookingsRoutes from './routes/publicBookings.js';
-import { authMiddleware } from './middleware/auth.js';
-
-dotenv.config();
+import { initializeSupabase } from './lib/supabase.ts';
+import authRoutes from './routes/auth.ts';
+import patientsRoutes from './routes/patients.ts';
+import vitalsRoutes from './routes/vitals.ts';
+import appointmentsRoutes from './routes/appointments.ts';
+import prescriptionsRoutes from './routes/prescriptions.ts';
+import nurseAssignmentsRoutes from './routes/nurseAssignments.ts';
+import configRoutes from './routes/config.ts';
+import serialQueueRoutes from './routes/serialQueue.ts';
+import receiptsRoutes from './routes/receipts.ts';
+import publicBookingsRoutes from './routes/publicBookings.ts';
+import { authMiddleware } from './middleware/auth.ts';
 
 const app = express();
 const PORT = process.env.API_PORT || 3000;

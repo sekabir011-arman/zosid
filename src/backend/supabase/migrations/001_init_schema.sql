@@ -489,3 +489,84 @@ create policy "Authenticated users can select serial queue entries" on public.se
 
 create policy "Authenticated users can select patient submissions" on public.patient_submissions
   for select using (true);
+
+-- Allow authenticated clients to write the operational records used by the app.
+create policy "Authenticated users can insert patients" on public.patients
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update patients" on public.patients
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert visits" on public.visits
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update visits" on public.visits
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert vitals" on public.vitals
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update vitals" on public.vitals
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert appointments" on public.appointments
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update appointments" on public.appointments
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert prescriptions" on public.prescriptions
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update prescriptions" on public.prescriptions
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert prescription items" on public.prescription_items
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update prescription items" on public.prescription_items
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert investigations" on public.investigations
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update investigations" on public.investigations
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert admission histories" on public.admission_histories
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update admission histories" on public.admission_histories
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert daily progress notes" on public.daily_progress_notes
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update daily progress notes" on public.daily_progress_notes
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert handover entries" on public.handover_entries
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update handover entries" on public.handover_entries
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert clinical alerts" on public.clinical_alerts
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update clinical alerts" on public.clinical_alerts
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert medication admin records" on public.medication_admin_records
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update medication admin records" on public.medication_admin_records
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert consent forms" on public.consent_forms
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update consent forms" on public.consent_forms
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert money receipts" on public.money_receipts
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update money receipts" on public.money_receipts
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert serial queue entries" on public.serial_queue_entries
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update serial queue entries" on public.serial_queue_entries
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users can insert patient submissions" on public.patient_submissions
+  for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can update patient submissions" on public.patient_submissions
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');

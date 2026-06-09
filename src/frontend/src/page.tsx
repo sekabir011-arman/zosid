@@ -1,17 +1,22 @@
-import { createClient } from '@/utils/supabase/server'
-import { cookies } from 'next/headers'
+import { useEffect, useState } from 'react';
+import { createClient } from '@/utils/supabase/server';
 
-export default async function Page() {
-  const cookieStore = await cookies()
-  const supabase = createClient(cookieStore)
+export default function Page() {
+  const [todos, setTodos] = useState<Array<{ id: string; name: string }>>([]);
 
-  const { data: todos } = await supabase.from('todos').select()
+  useEffect(() => {
+    void (async () => {
+      const supabase = createClient();
+      const { data } = await supabase.from('todos').select('id, name');
+      setTodos((data ?? []) as Array<{ id: string; name: string }>);
+    })();
+  }, []);
 
   return (
     <ul>
-      {todos?.map((todo) => (
+      {todos.map((todo) => (
         <li key={todo.id}>{todo.name}</li>
       ))}
     </ul>
-  )
+  );
 }

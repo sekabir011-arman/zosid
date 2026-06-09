@@ -1,4 +1,5 @@
 import { useCallback, useState, useEffect } from "react";
+import { getSupabaseSessionToken } from "../lib/supabase";
 import { saveFrontPageContentWithSync } from "../lib/hybridStorage";
 
 export interface SocialLink {
@@ -158,23 +159,23 @@ function loadConfig(): SiteConfig {
   }
 }
 
-function saveConfig(cfg: SiteConfig, actor?: unknown) {
-  // Always save to localStorage for offline access
+async function saveConfig(cfg: SiteConfig, actor?: unknown) {
+  // Keep the browser cache in sync for instant UI response.
   localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
-  
-  // Also sync to backend via API if available
-  syncToBackendAPI(cfg);
-  
-  // And sync to canister
+
+  // Persist the authoritative site config through the Supabase-backed backend.
+  await syncToBackendAPI(cfg);
+
+  // Keep the legacy canister sync path alive for existing offline workflows.
   saveFrontPageContentWithSync(actor ?? null);
 }
 
 // Helper: sync configuration to backend API
 async function syncToBackendAPI(cfg: SiteConfig) {
   try {
-    const token = localStorage.getItem('auth_token');
+    const token = await getSupabaseSessionToken();
     if (!token) {
-      // Not logged in, skip backend sync
+      console.warn('[sync] No auth token available; backend persistence is skipped until login.');
       return;
     }
 
@@ -190,7 +191,7 @@ async function syncToBackendAPI(cfg: SiteConfig) {
 
     for (const { section, data } of sections) {
       try {
-        await fetch(`${backendUrl}/api/config/${section}`, {
+        const response = await fetch(`${backendUrl}/api/config/${section}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -201,9 +202,13 @@ async function syncToBackendAPI(cfg: SiteConfig) {
             reason: 'Updated via admin panel',
           }),
         });
+
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${response.status}`);
+        }
       } catch (err) {
         console.warn(`[sync] Failed to sync ${section} to backend:`, err);
-        // Don't fail if backend sync fails - localStorage is the source of truth
       }
     }
   } catch (err) {
@@ -270,7 +275,7 @@ export function useSiteConfig() {
   const updateHero = useCallback((hero: Partial<HeroSection>) => {
     setConfig((prev) => {
       const next = { ...prev, heroSection: { ...prev.heroSection, ...hero } };
-      saveConfig(next, resolveActor());
+      void saveConfig(next, resolveActor());
       return next;
     });
   }, []);
@@ -281,7 +286,7 @@ export function useSiteConfig() {
         ...prev,
         aboutSection: { ...prev.aboutSection, ...about },
       };
-      saveConfig(next, resolveActor());
+      void saveConfig(next, resolveActor());
       return next;
     });
   }, []);
@@ -292,7 +297,7 @@ export function useSiteConfig() {
         ...prev,
         footerSection: { ...prev.footerSection, ...footer },
       };
-      saveConfig(next, resolveActor());
+      void saveConfig(next, resolveActor());
       return next;
     });
   }, []);
@@ -301,7 +306,7 @@ export function useSiteConfig() {
     (contacts: EmergencyContact[]) => {
       setConfig((prev) => {
         const next = { ...prev, emergencyContacts: contacts };
-        saveConfig(next, resolveActor());
+        void saveConfig(next, resolveActor());
         return next;
       });
     },
@@ -314,7 +319,7 @@ export function useSiteConfig() {
         ...prev,
         [section]: DEFAULT_SITE_CONFIG[section],
       };
-      saveConfig(next, resolveActor());
+      void saveConfig(next, resolveActor());
       return next;
     });
   }, []);

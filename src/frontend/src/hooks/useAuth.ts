@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { supabase } from '../lib/supabase';
 import type { StaffRole } from '../types';
 
 export interface LoginCredentials {
@@ -28,24 +29,27 @@ export const useAuth = () => {
     setLoading(true);
     setError(null);
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-      const response = await fetch(`${apiUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(credentials),
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: credentials.email,
+        password: credentials.password,
       });
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Login failed');
+      if (error || !data.session || !data.user) {
+        throw new Error(error?.message || 'Login failed');
       }
 
-      const data = await response.json();
-      setUser(data.user);
-      setToken(data.token);
-      localStorage.setItem('auth_token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      return data;
+      const nextUser = {
+        id: data.user.id,
+        email: data.user.email ?? credentials.email,
+        name: data.user.user_metadata?.name ?? data.user.email ?? credentials.email,
+        role: (data.user.user_metadata?.role ?? 'staff') as StaffRole,
+      };
+
+      setUser(nextUser);
+      setToken(data.session.access_token);
+      localStorage.setItem('auth_token', data.session.access_token);
+      localStorage.setItem('user', JSON.stringify(nextUser));
+      return { user: nextUser, token: data.session.access_token };
     } catch (err: any) {
       const message = err.message || 'Login error';
       setError(message);
@@ -59,24 +63,33 @@ export const useAuth = () => {
     setLoading(true);
     setError(null);
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-      const response = await fetch(`${apiUrl}/api/auth/signup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(credentials),
+      const { data, error } = await supabase.auth.signUp({
+        email: credentials.email,
+        password: credentials.password,
+        options: {
+          data: {
+            name: credentials.name,
+            role: credentials.role,
+          },
+        },
       });
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Signup failed');
+      if (error || !data.session || !data.user) {
+        throw new Error(error?.message || 'Signup failed');
       }
 
-      const data = await response.json();
-      setUser(data.user);
-      setToken(data.token);
-      localStorage.setItem('auth_token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      return data;
+      const nextUser = {
+        id: data.user.id,
+        email: data.user.email ?? credentials.email,
+        name: data.user.user_metadata?.name ?? credentials.name,
+        role: (data.user.user_metadata?.role ?? credentials.role) as StaffRole,
+      };
+
+      setUser(nextUser);
+      setToken(data.session.access_token);
+      localStorage.setItem('auth_token', data.session.access_token);
+      localStorage.setItem('user', JSON.stringify(nextUser));
+      return { user: nextUser, token: data.session.access_token };
     } catch (err: any) {
       const message = err.message || 'Signup error';
       setError(message);
@@ -89,6 +102,7 @@ export const useAuth = () => {
   const logout = useCallback(async () => {
     setLoading(true);
     try {
+      await supabase.auth.signOut();
       setUser(null);
       setToken(null);
       localStorage.removeItem('auth_token');
@@ -100,12 +114,23 @@ export const useAuth = () => {
     }
   }, []);
 
-  const restoreSession = useCallback(() => {
-    const storedToken = localStorage.getItem('auth_token');
-    const storedUser = localStorage.getItem('user');
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
+  const restoreSession = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      setToken(session.access_token);
+      setUser({
+        id: session.user.id,
+        email: session.user.email ?? '',
+        name: session.user.user_metadata?.name ?? session.user.email ?? '',
+        role: (session.user.user_metadata?.role ?? 'staff') as StaffRole,
+      });
+      localStorage.setItem('auth_token', session.access_token);
+      localStorage.setItem('user', JSON.stringify({
+        id: session.user.id,
+        email: session.user.email ?? '',
+        name: session.user.user_metadata?.name ?? session.user.email ?? '',
+        role: (session.user.user_metadata?.role ?? 'staff') as StaffRole,
+      }));
     }
   }, []);
 

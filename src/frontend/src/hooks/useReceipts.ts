@@ -30,7 +30,7 @@ export const useReceipts = () => {
     setLoading(true);
     setError(null);
     try {
-      const token = getToken();
+      const token = await getToken();
       const response = await fetch(`${API_BASE}/api/receipts/patient/${patientId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -52,7 +52,7 @@ export const useReceipts = () => {
       setLoading(true);
       setError(null);
       try {
-        const token = getToken();
+        const token = await getToken();
         const params = new URLSearchParams();
         if (from) params.append('from', from.toISOString());
         if (to) params.append('to', to.toISOString());
@@ -78,7 +78,7 @@ export const useReceipts = () => {
   const createReceipt = useCallback(
     async (data: ReceiptData) => {
       try {
-        const token = getToken();
+        const token = await getToken();
         const response = await fetch(`${API_BASE}/api/receipts`, {
           method: 'POST',
           headers: {
@@ -103,7 +103,7 @@ export const useReceipts = () => {
   const updateReceipt = useCallback(
     async (id: string, updates: Partial<ReceiptData>) => {
       try {
-        const token = getToken();
+        const token = await getToken();
         const response = await fetch(`${API_BASE}/api/receipts/${id}`, {
           method: 'PATCH',
           headers: {
@@ -128,7 +128,7 @@ export const useReceipts = () => {
   const deleteReceipt = useCallback(
     async (id: string) => {
       try {
-        const token = getToken();
+        const token = await getToken();
         const response = await fetch(`${API_BASE}/api/receipts/${id}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` },

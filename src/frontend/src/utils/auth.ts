@@ -1,15 +1,17 @@
 /**
- * Get the authentication token from localStorage
+ * Get the current authentication token from Supabase session state,
+ * with a localStorage fallback for existing sessions.
  */
-export const getToken = (): string | null => {
-  return localStorage.getItem('auth_token');
+export const getToken = async (): Promise<string | null> => {
+  const { data: { session } } = await import('../lib/supabase').then(({ supabase }) => supabase.auth.getSession());
+  return session?.access_token ?? localStorage.getItem('auth_token');
 };
 
 /**
  * Check if user is authenticated
  */
-export const isAuthenticated = (): boolean => {
-  return Boolean(getToken());
+export const isAuthenticated = async (): Promise<boolean> => {
+  return Boolean(await getToken());
 };
 
 /**
@@ -22,7 +24,13 @@ export const setToken = (token: string): void => {
 /**
  * Clear the authentication token
  */
-export const clearToken = (): void => {
+export const clearToken = async (): Promise<void> => {
+  try {
+    const { supabase } = await import('../lib/supabase');
+    await supabase.auth.signOut();
+  } catch {
+    // Ignore sign-out failures and fall back to local cleanup.
+  }
   localStorage.removeItem('auth_token');
 };
 

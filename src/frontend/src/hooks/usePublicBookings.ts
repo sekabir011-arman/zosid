@@ -31,7 +31,7 @@ export const usePublicBookings = () => {
     setLoading(true);
     setError(null);
     try {
-      const token = getToken();
+      const token = await getToken();
       const response = await fetch(`${API_BASE}/api/public-bookings`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -73,7 +73,7 @@ export const usePublicBookings = () => {
   const updateBookingStatus = useCallback(
     async (id: string, status: 'confirmed' | 'cancelled') => {
       try {
-        const token = getToken();
+        const token = await getToken();
         const response = await fetch(`${API_BASE}/api/public-bookings/${id}`, {
           method: 'PATCH',
           headers: {
@@ -98,7 +98,7 @@ export const usePublicBookings = () => {
   const deleteBooking = useCallback(
     async (id: string) => {
       try {
-        const token = getToken();
+        const token = await getToken();
         const response = await fetch(`${API_BASE}/api/public-bookings/${id}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` },

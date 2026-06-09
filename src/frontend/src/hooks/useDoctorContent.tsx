@@ -1,6 +1,7 @@
 import { doctors } from "@/data/doctorsData";
 import type { DoctorKey } from "@/data/doctorsData";
 import { useCallback, useEffect, useState } from "react";
+import { getSupabaseSessionToken } from "../lib/supabase";
 import { saveFrontPageContentWithSync } from "../lib/hybridStorage";
 
 const STORAGE_KEY = "doctorContentOverrides";
@@ -19,7 +20,7 @@ function loadOverrides(): Overrides {
 }
 
 async function syncOverridesToBackend(overrides: Overrides) {
-  const token = localStorage.getItem("auth_token");
+  const token = await getSupabaseSessionToken();
   if (!token) return;
 
   try {
@@ -41,7 +42,7 @@ async function syncOverridesToBackend(overrides: Overrides) {
 
 function saveOverrides(overrides: Overrides, syncToBackend = true) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
-  // Sync to canister so all devices see the latest doctor content overrides
+  // Sync to the Supabase-backed backend and canister so all devices see the latest doctor content overrides.
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require("../hooks/useQueries") as {

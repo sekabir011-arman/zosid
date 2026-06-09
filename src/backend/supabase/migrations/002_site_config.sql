@@ -21,6 +21,23 @@ for each row execute function public.set_updated_at();
 create index idx_site_config_section on public.site_config(section);
 create index idx_site_config_updated_at on public.site_config(updated_at desc);
 
+alter table public.site_config enable row level security;
+alter table public.config_audit_log enable row level security;
+
+create policy "Public can read site config" on public.site_config
+  for select using (true);
+create policy "Admins can upsert site config" on public.site_config
+  for insert with check (auth.role() = 'authenticated');
+create policy "Admins can update site config" on public.site_config
+  for update using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "Admins can delete site config" on public.site_config
+  for delete using (auth.role() = 'authenticated');
+
+create policy "Public can read config audit log" on public.config_audit_log
+  for select using (true);
+create policy "Admins can insert config audit log" on public.config_audit_log
+  for insert with check (auth.role() = 'authenticated');
+
 -- Audit Log Table
 -- Tracks all changes to site configuration with full history
 
