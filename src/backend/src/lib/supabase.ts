@@ -1,63 +1,71 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-let supabase: any = null;
+let supabase: SupabaseClient | null = null;
 
 function getSupabaseConfig() {
-  const supabaseUrl =
-    process.env.SUPABASE_URL ||
-    process.env.VITE_SUPABASE_URL ||
-    process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
 
-  const serviceRoleKey =
-    process.env.SUPABASE_SERVICE_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.VITE_SUPABASE_SERVICE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
-
-  const anonKey =
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-  return { supabaseUrl, serviceRoleKey, anonKey };
+  return {
+    supabaseUrl,
+    serviceRoleKey,
+    anonKey,
+  };
 }
 
-export function initializeSupabase() {
+export function initializeSupabase(): SupabaseClient {
   const { supabaseUrl, serviceRoleKey } = getSupabaseConfig();
 
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error('Missing Supabase configuration (URL or Service Role Key)');
+  if (!supabaseUrl) {
+    throw new Error('Missing SUPABASE_URL');
   }
 
-  supabase = createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  }) as any;
+  if (!serviceRoleKey) {
+    throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY');
+  }
+
+  supabase = createClient(
+    supabaseUrl,
+    serviceRoleKey,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  );
 
   return supabase;
 }
 
-export function getSupabaseClient(): any {
+export function getSupabaseClient(): SupabaseClient {
   if (!supabase) {
-    throw new Error('Supabase not initialized. Call initializeSupabase() first.');
+    return initializeSupabase();
   }
+
   return supabase;
 }
 
-export function getSupabaseAuthClient(): any {
+export function getSupabaseAuthClient(): SupabaseClient {
   const { supabaseUrl, anonKey } = getSupabaseConfig();
 
-  if (!supabaseUrl || !anonKey) {
-    throw new Error('Missing Supabase configuration (URL or Anonymous Key)');
+  if (!supabaseUrl) {
+    throw new Error('Missing SUPABASE_URL');
   }
 
-  return createClient(supabaseUrl, anonKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  }) as any;
+  if (!anonKey) {
+    throw new Error('Missing SUPABASE_ANON_KEY');
+  }
+
+  return createClient(
+    supabaseUrl,
+    anonKey,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  );
 }
