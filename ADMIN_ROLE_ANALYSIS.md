@@ -222,7 +222,7 @@ VITE_API_URL=http://localhost:3000  # or your backend URL
 Add these to your `.env` (backend):
 ```env
 SUPABASE_URL=your_supabase_url
-SUPABASE_SERVICE_KEY=your_service_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_key
 JWT_SECRET=your_jwt_secret
 ```
 

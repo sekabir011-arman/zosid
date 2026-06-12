@@ -112,7 +112,7 @@ VITE_API_URL=http://localhost:3000
 
 # Backend: .env
 SUPABASE_URL=your_url
-SUPABASE_SERVICE_KEY=your_key
+SUPABASE_SERVICE_ROLE_KEY=your_key
 ```
 
 ### 3. Restart Services

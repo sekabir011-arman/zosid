@@ -11,10 +11,10 @@ Use this order to make the backend connect to Supabase reliably.
    - Open `src/backend/.env`.
    - Set:
      - `SUPABASE_URL=<your-project-url>`
-     - `SUPABASE_SERVICE_KEY=<your-service-role-key>`
+     - `SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>`
    - Optional compatibility aliases:
      - `VITE_SUPABASE_URL=<same-url>`
-     - `VITE_SUPABASE_SERVICE_KEY=<same-service-role-key>`
+     - `VITE_SUPABASE_SERVICE_ROLE_KEY=<same-service-role-key>`
 
 3. Update the frontend environment file.
    - Open `src/frontend/.env.local`.
@@ -45,6 +45,6 @@ Use this order to make the backend connect to Supabase reliably.
    - If writes fail, confirm the Supabase RLS policies allow the role used by the request.
 
 8. If the backend still fails, check these exact variables.
-   - Backend uses: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
+   - Backend uses: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
    - Frontend uses: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
    - Compatibility fallbacks now support `NEXT_PUBLIC_*` too.

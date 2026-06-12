@@ -12,7 +12,7 @@ Copy `.env.example` to `.env` and fill in your Supabase credentials:
 cp .env.example .env
 ```
 
-Then update `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` in `.env`.
+Then update `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env`.
 
 ### 2. Install Dependencies
 

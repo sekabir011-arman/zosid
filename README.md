@@ -98,7 +98,7 @@ Frontend (`src/frontend`):
 
 Backend (`src/backend`):
 - `SUPABASE_URL`
-- `SUPABASE_SERVICE_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
 - `JWT_SECRET`
 - `JWT_EXPIRY`
 - `API_PORT` (optional)
@@ -115,7 +115,7 @@ To deploy the frontend on Vercel:
 
 If you want a full production deployment, host the backend separately on a Node-capable service or convert the API into Vercel serverless functions. Backend deployment requires:
 - `SUPABASE_URL`
-- `SUPABASE_SERVICE_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
 - `JWT_SECRET`
 - `JWT_EXPIRY`
 

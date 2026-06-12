@@ -111,7 +111,7 @@ import { createClient } from '@supabase/supabase-js';
 import { authMiddleware, requireRole, AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = express.Router();
-const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_SERVICE_KEY || '');
+const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_SERVICE_ROLE_KEY || '');
 
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -518,7 +518,7 @@ import { createClient } from '@supabase/supabase-js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = express.Router();
-const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_SERVICE_KEY || '');
+const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_SERVICE_ROLE_KEY || '');
 
 // File upload configuration
 const upload = multer({
