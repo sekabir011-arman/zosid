@@ -1,5 +1,5 @@
 import { useCallback, useState, useEffect } from "react";
-import { getSupabaseSessionToken } from "../lib/supabase";
+import { supabase, getSupabaseSessionToken } from "../lib/supabase";
 import { saveFrontPageContentWithSync } from "../lib/hybridStorage";
 
 export interface SocialLink {
@@ -68,7 +68,7 @@ export const DEFAULT_SITE_CONFIG: SiteConfig = {
     heroDescriptionEn:
       "Expert diagnosis, compassionate treatment, and trusted care for every stage of life.",
     heroDescriptionBn:
-      "জীবনের প্রতিটি পর্যায়ে বিশেষজ্ঞ রোগ নির্ণয়, সহানুভূতিশীল চিকিৎসা ও বিশ্বস্ত সেবা।",
+      "জীবনের প্রতিটি পর্যায়ে বিশেষজ্ঞ রোগ নির্ণয়, সহানুভূতিশীল চিকিৎসা ও বিশ্বস্ত যত্ন।",
     cta1Label: "Book Appointment",
     cta2Label: "Emergency",
   },
@@ -79,7 +79,7 @@ export const DEFAULT_SITE_CONFIG: SiteConfig = {
     descriptionEn:
       "Comprehensive patient management and medical education serving patients and students across Bangladesh.",
     descriptionBn:
-      "বাংলাদেশ জুড়ে রোগী ও শিক্ষার্থীদের জন্য পূর্ণাঙ্গ রোগী ব্যবস্থাপনা ও চিকিৎসা শিক্ষা।",
+      "বাংলাদেশ জুড়ে রোগী ও শিক্ষার্থীদের জন্য পূর্ণাঙ্গ রোগী ব্যবস্থাপনা ও মেডিকেল শিক্ষা।",
     yearsExperience: 10,
     patientCount: "500+",
     doctorCount: 2,
@@ -119,8 +119,6 @@ export const DEFAULT_SITE_CONFIG: SiteConfig = {
   ],
 };
 
-const STORAGE_KEY = "siteConfig";
-
 function deepMerge<T extends object>(base: T, overrides: Partial<T>): T {
   const result = { ...base } as T;
   for (const key of Object.keys(overrides) as (keyof T)[]) {
@@ -146,97 +144,62 @@ function deepMerge<T extends object>(base: T, overrides: Partial<T>): T {
   return result;
 }
 
-function loadConfig(): SiteConfig {
+async function fetchConfigFromSupabase(): Promise<Partial<SiteConfig> | null> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_SITE_CONFIG;
-    return deepMerge(
-      DEFAULT_SITE_CONFIG,
-      JSON.parse(raw) as Partial<SiteConfig>,
-    );
-  } catch {
-    return DEFAULT_SITE_CONFIG;
-  }
-}
+    const { data, error } = await supabase
+      .from("site_config")
+      .select("*")
+      .single();
 
-async function saveConfig(cfg: SiteConfig, actor?: unknown) {
-  // Keep the browser cache in sync for instant UI response.
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
-
-  // Persist the authoritative site config through the Supabase-backed backend.
-  await syncToBackendAPI(cfg);
-
-  // Keep the legacy canister sync path alive for existing offline workflows.
-  saveFrontPageContentWithSync(actor ?? null);
-}
-
-// Helper: sync configuration to backend API
-async function syncToBackendAPI(cfg: SiteConfig) {
-  try {
-    const token = await getSupabaseSessionToken();
-    if (!token) {
-      console.warn('[sync] No auth token available; backend persistence is skipped until login.');
-      return;
-    }
-
-    const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-    
-    // Sync each section to backend
-    const sections: Array<{section: keyof SiteConfig; data: unknown}> = [
-      { section: 'heroSection', data: cfg.heroSection },
-      { section: 'aboutSection', data: cfg.aboutSection },
-      { section: 'footerSection', data: cfg.footerSection },
-      { section: 'emergencyContacts', data: cfg.emergencyContacts },
-    ];
-
-    for (const { section, data } of sections) {
-      try {
-        const response = await fetch(`${backendUrl}/api/config/${section}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            config: data,
-            reason: 'Updated via admin panel',
-          }),
-        });
-
-        if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
-          throw new Error(body.error || `HTTP ${response.status}`);
-        }
-      } catch (err) {
-        console.warn(`[sync] Failed to sync ${section} to backend:`, err);
-      }
-    }
-  } catch (err) {
-    console.warn('[sync] Failed to sync config to backend:', err);
-  }
-}
-
-// Helper: fetch configuration from backend
-async function fetchConfigFromBackend(): Promise<Partial<SiteConfig> | null> {
-  try {
-    const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-    const response = await fetch(`${backendUrl}/api/config`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      console.warn('[sync] Failed to fetch config from backend:', response.status);
+    if (error) {
+      console.warn("[sync] Failed to fetch config from Supabase:", error);
       return null;
     }
 
-    const data = await response.json() as Record<string, unknown>;
-    return data as Partial<SiteConfig>;
+    if (!data) return null;
+
+    // Transform Supabase response to SiteConfig format
+    return {
+      heroSection: data.hero_section || undefined,
+      aboutSection: data.about_section || undefined,
+      footerSection: data.footer_section || undefined,
+      emergencyContacts: data.emergency_contacts || undefined,
+    } as Partial<SiteConfig>;
   } catch (err) {
-    console.warn('[sync] Failed to fetch config from backend:', err);
+    console.warn("[sync] Failed to fetch config from Supabase:", err);
     return null;
+  }
+}
+
+async function syncConfigToSupabase(cfg: SiteConfig): Promise<void> {
+  try {
+    const token = await getSupabaseSessionToken();
+    if (!token) {
+      console.warn(
+        "[sync] No auth token available; Supabase sync is skipped until login.",
+      );
+      return;
+    }
+
+    const { error } = await supabase
+      .from("site_config")
+      .upsert(
+        {
+          id: 1, // assuming single config record
+          hero_section: cfg.heroSection,
+          about_section: cfg.aboutSection,
+          footer_section: cfg.footerSection,
+          emergency_contacts: cfg.emergencyContacts,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "id" },
+      );
+
+    if (error) {
+      throw error;
+    }
+  } catch (err) {
+    console.warn("[sync] Failed to sync config to Supabase:", err);
   }
 }
 
@@ -254,28 +217,42 @@ function resolveActor(): unknown | null {
 }
 
 export function useSiteConfig() {
-  const [config, setConfig] = useState<SiteConfig>(loadConfig);
+  const [config, setConfig] = useState<SiteConfig>(DEFAULT_SITE_CONFIG);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
-  // On mount, try to sync from backend
+  // On mount, fetch from Supabase
   useEffect(() => {
-    const syncFromBackend = async () => {
-      const backendConfig = await fetchConfigFromBackend();
-      if (backendConfig) {
-        // Merge backend config with local config
-        const merged = deepMerge(config, backendConfig);
-        setConfig(merged);
-        // Update localStorage with backend data
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+    const syncFromSupabase = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+
+        const supabaseConfig = await fetchConfigFromSupabase();
+
+        if (supabaseConfig) {
+          const merged = deepMerge(DEFAULT_SITE_CONFIG, supabaseConfig);
+          setConfig(merged);
+        } else {
+          setConfig(DEFAULT_SITE_CONFIG);
+        }
+      } catch (err) {
+        console.error("[sync] Error loading config from Supabase:", err);
+        setError(err instanceof Error ? err : new Error("Unknown error"));
+        setConfig(DEFAULT_SITE_CONFIG);
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    syncFromBackend();
+    syncFromSupabase();
   }, []);
 
   const updateHero = useCallback((hero: Partial<HeroSection>) => {
     setConfig((prev) => {
       const next = { ...prev, heroSection: { ...prev.heroSection, ...hero } };
-      void saveConfig(next, resolveActor());
+      void syncConfigToSupabase(next);
+      void saveFrontPageContentWithSync(resolveActor());
       return next;
     });
   }, []);
@@ -286,7 +263,8 @@ export function useSiteConfig() {
         ...prev,
         aboutSection: { ...prev.aboutSection, ...about },
       };
-      void saveConfig(next, resolveActor());
+      void syncConfigToSupabase(next);
+      void saveFrontPageContentWithSync(resolveActor());
       return next;
     });
   }, []);
@@ -297,7 +275,8 @@ export function useSiteConfig() {
         ...prev,
         footerSection: { ...prev.footerSection, ...footer },
       };
-      void saveConfig(next, resolveActor());
+      void syncConfigToSupabase(next);
+      void saveFrontPageContentWithSync(resolveActor());
       return next;
     });
   }, []);
@@ -306,7 +285,8 @@ export function useSiteConfig() {
     (contacts: EmergencyContact[]) => {
       setConfig((prev) => {
         const next = { ...prev, emergencyContacts: contacts };
-        void saveConfig(next, resolveActor());
+        void syncConfigToSupabase(next);
+        void saveFrontPageContentWithSync(resolveActor());
         return next;
       });
     },
@@ -319,13 +299,16 @@ export function useSiteConfig() {
         ...prev,
         [section]: DEFAULT_SITE_CONFIG[section],
       };
-      void saveConfig(next, resolveActor());
+      void syncConfigToSupabase(next);
+      void saveFrontPageContentWithSync(resolveActor());
       return next;
     });
   }, []);
 
   return {
     config,
+    isLoading,
+    error,
     updateHero,
     updateAbout,
     updateFooter,
