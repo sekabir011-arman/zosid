@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { supabase } from '../lib/supabase';
 import type { StaffRole } from '../types';
 
 export interface LoginCredentials {
@@ -26,110 +27,158 @@ export interface User {
 
 export const useAuth = () => {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const API_URL = import.meta.env.VITE_API_URL;
 
   const login = useCallback(async (credentials: LoginCredentials) => {
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(`${API_URL}/auth/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(credentials),
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: credentials.email,
+        password: credentials.password,
       });
 
-      const result = await response.json();
+      if (error) throw error;
 
-      if (!response.ok) {
-        throw new Error(result.error || 'Login failed');
+      if (!data.user) {
+        throw new Error('User not found');
       }
 
-      setUser(result.user);
-      setToken(result.token);
+      const { data: profile, error: profileError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', data.user.id)
+        .single();
 
-      localStorage.setItem('auth_token', result.token);
-      localStorage.setItem('user', JSON.stringify(result.user));
+      if (profileError) throw profileError;
 
-      return result;
+      const userData: User = {
+        id: data.user.id,
+        email: data.user.email ?? '',
+        name: profile.name,
+        role: profile.role,
+        department: profile.department,
+        unit: profile.unit,
+      };
+
+      setUser(userData);
+
+      return {
+        user: userData,
+        session: data.session,
+      };
     } catch (err: any) {
-      const message = err.message || 'Login error';
+      const message = err?.message ?? 'Login failed';
       setError(message);
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [API_URL]);
+  }, []);
 
   const signup = useCallback(async (credentials: SignUpCredentials) => {
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(`${API_URL}/auth/signup`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const { data, error } = await supabase.auth.signUp({
+        email: credentials.email,
+        password: credentials.password,
+        options: {
+          data: {
+            name: credentials.name,
+            role: credentials.role,
+            department: credentials.department,
+            unit: credentials.unit,
+          },
         },
-        body: JSON.stringify(credentials),
       });
 
-      const result = await response.json();
+      if (error) throw error;
 
-      if (!response.ok) {
-        throw new Error(result.error || 'Signup failed');
+      if (!data.user) {
+        throw new Error('Signup failed');
       }
 
-      setUser(result.user);
-      setToken(result.token);
+      const { error: insertError } = await supabase
+        .from('users')
+        .insert({
+          id: data.user.id,
+          email: credentials.email,
+          name: credentials.name,
+          role: credentials.role,
+          department: credentials.department ?? null,
+          unit: credentials.unit ?? null,
+        });
 
-      localStorage.setItem('auth_token', result.token);
-      localStorage.setItem('user', JSON.stringify(result.user));
+      if (insertError) throw insertError;
 
-      return result;
+      const userData: User = {
+        id: data.user.id,
+        email: credentials.email,
+        name: credentials.name,
+        role: credentials.role,
+        department: credentials.department ?? null,
+        unit: credentials.unit ?? null,
+      };
+
+      setUser(userData);
+
+      return {
+        user: userData,
+        session: data.session,
+      };
     } catch (err: any) {
-      const message = err.message || 'Signup error';
+      const message = err?.message ?? 'Signup failed';
       setError(message);
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [API_URL]);
-
-  const logout = useCallback(async () => {
-    setUser(null);
-    setToken(null);
-
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user');
   }, []);
 
-  const restoreSession = useCallback(() => {
-    try {
-      const storedToken = localStorage.getItem('auth_token');
-      const storedUser = localStorage.getItem('user');
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  }, []);
 
-      if (!storedToken || !storedUser) {
+  const restoreSession = useCallback(async () => {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.user) {
+        setUser(null);
         return;
       }
 
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
-    } catch {
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('user');
+      const { data: profile, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+
+      if (error) throw error;
+
+      setUser({
+        id: session.user.id,
+        email: session.user.email ?? '',
+        name: profile.name,
+        role: profile.role,
+        department: profile.department,
+        unit: profile.unit,
+      });
+    } catch (err) {
+      console.error(err);
+      setUser(null);
     }
   }, []);
 
   return {
     user,
-    token,
     loading,
     error,
     login,
