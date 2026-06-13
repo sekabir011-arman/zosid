@@ -1,5 +1,6 @@
 import type { Principal } from "../lib/icp-stubs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "../lib/supabase";
 import { saveClinicalEntitiesWithSync } from "../lib/hybridStorage";
 import type {
   AdmissionHistory,
@@ -25,30 +26,18 @@ import type {
   VitalSigns,
 } from "../types";
 
-// ─── Canister actor singleton ────────────────────────────────────────────────
-// App.tsx calls setCanisterActor(actor) once after it creates the actor.
-// Query functions call getCanisterActor() to read from canister when online.
-// This avoids prop-drilling the actor through every component.
+// ─── Network probe ─────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _canisterActor: any | null = null;
+let _isOnlineCache = navigator.onLine;
+window.addEventListener("online", () => {
+  _isOnlineCache = true;
+});
+window.addEventListener("offline", () => {
+  _isOnlineCache = false;
+});
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function setCanisterActor(actor: any): void {
-  _canisterActor = actor;
-}
-
-/** Get the current canister actor — used by non-hook code that needs direct access */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getCanisterActor(): any | null {
-  return _canisterActor;
-}
-
-/** Exported ref getter for modules that import dynamically */
-export const _canisterActorRef = () => _canisterActor;
-
-function canUseCanister(): boolean {
-  return _canisterActor !== null && navigator.onLine;
+export function isNetworkOnline(): boolean {
+  return _isOnlineCache;
 }
 
 // ─── BigInt serialization helpers ───────────────────────────────────────────
@@ -298,25 +287,28 @@ export function createPatientInStorage(data: {
   return newPatient;
 }
 
-// ─── Patients ────────────────────────────────────────────────────────────────
+// ─── Patients ───────────────────────────────────────────────────────────────
 
 export function useGetAllPatients() {
   return useQuery<Patient[]>({
     queryKey: ["patients"],
     queryFn: async () => {
-      // When online: fetch from canister (single source of truth for all devices),
-      // update localStorage as offline cache, then return merged list.
-      if (canUseCanister()) {
+      // When online: fetch from Supabase
+      if (isNetworkOnline()) {
         try {
-          const remote = (await _canisterActor.getAllPatients()) as Patient[];
-          if (Array.isArray(remote) && remote.length > 0) {
+          const { data, error } = await supabase
+            .from("patients")
+            .select("*");
+          if (error) throw error;
+          if (Array.isArray(data) && data.length > 0) {
             const key = storageKey("patients");
             const local = loadFromStorage<Patient>(key);
-            const merged = mergeArraysById(local, remote);
+            const merged = mergeArraysById(local, data as Patient[]);
             saveToStorage(key, merged);
             return merged;
           }
-        } catch {
+        } catch (err) {
+          console.error("Error fetching patients from Supabase:", err);
           // Silently fall through to localStorage
         }
       }
@@ -331,23 +323,27 @@ export function useGetPatient(id: bigint | null) {
     queryKey: ["patient", id?.toString()],
     queryFn: async () => {
       if (!id) return null;
-      // When online: fetch fresh from canister
-      if (canUseCanister()) {
+      // When online: fetch fresh from Supabase
+      if (isNetworkOnline()) {
         try {
-          const remote = (await _canisterActor.getPatient(
-            id,
-          )) as Patient | null;
-          if (remote) {
+          const { data, error } = await supabase
+            .from("patients")
+            .select("*")
+            .eq("id", id.toString())
+            .single();
+          if (error && error.code !== "PGRST116") throw error;
+          if (data) {
             // Update localStorage cache
             const key = storageKey("patients");
             const local = loadFromStorage<Patient>(key);
             const updated = local.some((p) => p.id === id)
-              ? local.map((p) => (p.id === id ? remote : p))
-              : [...local, remote];
+              ? local.map((p) => (p.id === id ? (data as Patient) : p))
+              : [...local, data as Patient];
             saveToStorage(key, updated);
-            return remote;
+            return data as Patient;
           }
-        } catch {
+        } catch (err) {
+          console.error("Error fetching patient from Supabase:", err);
           // Fall through to localStorage
         }
       }
@@ -410,39 +406,20 @@ export function useCreatePatient() {
         if (data.photo !== undefined) {
           (newPatient as Record<string, unknown>).photo = data.photo;
         }
-        // 1. Always write to localStorage first (offline-first) — toast can fire after this
+        // 1. Always write to localStorage first (offline-first)
         saveToStorage(key, [...patients, newPatient]);
 
-        const patientId = String(newPatient.id);
-
-        // 2. Push to canister if online (using upsertPatient — idempotent)
-        if (canUseCanister()) {
+        // 2. Push to Supabase if online
+        if (isNetworkOnline()) {
           try {
-            await _canisterActor.upsertPatient(newPatient);
-            // Remove any stale pending queue items for this patient
-            const { removeFromQueue } = await import("../lib/hybridStorage");
-            removeFromQueue("upsertPatient", new Set([patientId]));
+            const { error } = await supabase
+              .from("patients")
+              .insert([newPatient]);
+            if (error) throw error;
           } catch (e) {
-            console.warn(
-              "Canister upsertPatient failed, queuing for retry:",
-              e,
-            );
-            const { enqueueSync } = await import("../lib/hybridStorage");
-            enqueueSync({
-              timestamp: Date.now(),
-              type: "upsertPatient",
-              entityId: patientId,
-              data: newPatient,
-            });
+            console.warn("Supabase insert patient failed:", e);
+            // Still return success since it's in localStorage
           }
-        } else {
-          const { enqueueSync } = await import("../lib/hybridStorage");
-          enqueueSync({
-            timestamp: Date.now(),
-            type: "upsertPatient",
-            entityId: patientId,
-            data: newPatient,
-          });
         }
 
         return newPatient;
@@ -505,36 +482,18 @@ export function useUpdatePatient() {
         // 1. Always write to localStorage first (offline-first)
         saveToStorage(key, updated);
 
-        const patientId = String(data.id);
-
-        // 2. Push to canister if online (using upsertPatient — idempotent)
-        if (canUseCanister()) {
+        // 2. Push to Supabase if online
+        if (isNetworkOnline()) {
           try {
-            await _canisterActor.upsertPatient(updatedPatient);
-            // Remove any stale pending queue items for this patient
-            const { removeFromQueue } = await import("../lib/hybridStorage");
-            removeFromQueue("upsertPatient", new Set([patientId]));
+            const { error } = await supabase
+              .from("patients")
+              .update(updatedPatient)
+              .eq("id", data.id.toString());
+            if (error) throw error;
           } catch (e) {
-            console.warn(
-              "Canister upsertPatient failed, queuing for retry:",
-              e,
-            );
-            const { enqueueSync } = await import("../lib/hybridStorage");
-            enqueueSync({
-              timestamp: Date.now(),
-              type: "upsertPatient",
-              entityId: patientId,
-              data: updatedPatient,
-            });
+            console.warn("Supabase update patient failed:", e);
+            // Still return success since it's in localStorage
           }
-        } else {
-          const { enqueueSync } = await import("../lib/hybridStorage");
-          enqueueSync({
-            timestamp: Date.now(),
-            type: "upsertPatient",
-            entityId: patientId,
-            data: updatedPatient,
-          });
         }
 
         return updatedPatient;
@@ -560,32 +519,48 @@ export function useDeletePatient() {
         key,
         patients.filter((p) => p.id !== id),
       );
+
+      // Delete from Supabase if online
+      if (isNetworkOnline()) {
+        try {
+          const { error } = await supabase
+            .from("patients")
+            .delete()
+            .eq("id", id.toString());
+          if (error) throw error;
+        } catch (e) {
+          console.warn("Supabase delete patient failed:", e);
+        }
+      }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["patients"] }),
   });
 }
 
-// ─── Visits ──────────────────────────────────────────────────────────────────
+// ─── Visits ────────────────────────────────────────────────────────────────
 
 export function useGetVisitsByPatient(patientId: bigint | null) {
   return useQuery<Visit[]>({
     queryKey: ["visits", patientId?.toString()],
     queryFn: async () => {
       if (!patientId) return [];
-      // When online: fetch from canister
-      if (canUseCanister()) {
+      // When online: fetch from Supabase
+      if (isNetworkOnline()) {
         try {
-          const remote = (await _canisterActor.getVisitsByPatientId(
-            patientId,
-          )) as Visit[];
-          if (Array.isArray(remote)) {
+          const { data, error } = await supabase
+            .from("visits")
+            .select("*")
+            .eq("patientId", patientId.toString());
+          if (error) throw error;
+          if (Array.isArray(data)) {
             const key = storageKey("visits");
             const local = loadFromStorage<Visit>(key);
-            const merged = mergeArraysById(local, remote);
+            const merged = mergeArraysById(local, data as Visit[]);
             saveToStorage(key, merged);
             return merged.filter((v) => v.patientId === patientId);
           }
-        } catch {
+        } catch (err) {
+          console.error("Error fetching visits from Supabase:", err);
           // Fall through to localStorage
         }
       }
@@ -634,32 +609,16 @@ export function useCreateVisit() {
       // 1. Always write to localStorage first (offline-first)
       saveToStorage(key, [...visits, newVisit]);
 
-      const visitId = String(newVisit.id);
-
-      // 2. Push to canister if online (using upsertVisit — idempotent)
-      if (canUseCanister()) {
+      // 2. Push to Supabase if online
+      if (isNetworkOnline()) {
         try {
-          await _canisterActor.upsertVisit(newVisit);
-          const { removeFromQueue } = await import("../lib/hybridStorage");
-          removeFromQueue("upsertVisit", new Set([visitId]));
+          const { error } = await supabase
+            .from("visits")
+            .insert([newVisit]);
+          if (error) throw error;
         } catch (e) {
-          console.warn("Canister upsertVisit failed, queuing for retry:", e);
-          const { enqueueSync } = await import("../lib/hybridStorage");
-          enqueueSync({
-            timestamp: Date.now(),
-            type: "upsertVisit",
-            entityId: visitId,
-            data: newVisit,
-          });
+          console.warn("Supabase insert visit failed:", e);
         }
-      } else {
-        const { enqueueSync } = await import("../lib/hybridStorage");
-        enqueueSync({
-          timestamp: Date.now(),
-          type: "upsertVisit",
-          entityId: visitId,
-          data: newVisit,
-        });
       }
 
       return newVisit;
@@ -682,6 +641,19 @@ export function useDeleteVisit() {
         key,
         visits.filter((v) => v.id !== id),
       );
+
+      // Delete from Supabase if online
+      if (isNetworkOnline()) {
+        try {
+          const { error } = await supabase
+            .from("visits")
+            .delete()
+            .eq("id", id.toString());
+          if (error) throw error;
+        } catch (e) {
+          console.warn("Supabase delete visit failed:", e);
+        }
+      }
     },
     onSuccess: (_, vars) =>
       qc.invalidateQueries({ queryKey: ["visits", vars.patientId.toString()] }),
@@ -723,32 +695,17 @@ export function useUpdateVisit() {
       // 1. Always write to localStorage first (offline-first)
       saveToStorage(key, updated);
 
-      const visitId = String(data.id);
-
-      // 2. Push to canister if online (using upsertVisit — idempotent)
-      if (canUseCanister()) {
+      // 2. Push to Supabase if online
+      if (isNetworkOnline()) {
         try {
-          await _canisterActor.upsertVisit(updatedVisit);
-          const { removeFromQueue } = await import("../lib/hybridStorage");
-          removeFromQueue("upsertVisit", new Set([visitId]));
+          const { error } = await supabase
+            .from("visits")
+            .update(updatedVisit)
+            .eq("id", data.id.toString());
+          if (error) throw error;
         } catch (e) {
-          console.warn("Canister upsertVisit failed, queuing for retry:", e);
-          const { enqueueSync } = await import("../lib/hybridStorage");
-          enqueueSync({
-            timestamp: Date.now(),
-            type: "upsertVisit",
-            entityId: visitId,
-            data: updatedVisit,
-          });
+          console.warn("Supabase update visit failed:", e);
         }
-      } else {
-        const { enqueueSync } = await import("../lib/hybridStorage");
-        enqueueSync({
-          timestamp: Date.now(),
-          type: "upsertVisit",
-          entityId: visitId,
-          data: updatedVisit,
-        });
       }
 
       return updatedVisit;
@@ -758,27 +715,30 @@ export function useUpdateVisit() {
   });
 }
 
-// ─── Prescriptions ───────────────────────────────────────────────────────────
+// ─── Prescriptions ─────────────────────────────────────────────────────────
 
 export function useGetPrescriptionsByPatient(patientId: bigint | null) {
   return useQuery<Prescription[]>({
     queryKey: ["prescriptions", patientId?.toString()],
     queryFn: async () => {
       if (!patientId) return [];
-      // When online: fetch from canister
-      if (canUseCanister()) {
+      // When online: fetch from Supabase
+      if (isNetworkOnline()) {
         try {
-          const remote = (await _canisterActor.getPrescriptionsByPatientId(
-            patientId,
-          )) as Prescription[];
-          if (Array.isArray(remote)) {
+          const { data, error } = await supabase
+            .from("prescriptions")
+            .select("*")
+            .eq("patientId", patientId.toString());
+          if (error) throw error;
+          if (Array.isArray(data)) {
             const key = storageKey("prescriptions");
             const local = loadFromStorage<Prescription>(key);
-            const merged = mergeArraysById(local, remote);
+            const merged = mergeArraysById(local, data as Prescription[]);
             saveToStorage(key, merged);
             return merged.filter((p) => p.patientId === patientId);
           }
-        } catch {
+        } catch (err) {
+          console.error("Error fetching prescriptions from Supabase:", err);
           // Fall through to localStorage
         }
       }
@@ -823,35 +783,16 @@ export function useCreatePrescription() {
       // 1. Always write to localStorage first (offline-first)
       saveToStorage(key, [...prescriptions, newPrescription]);
 
-      const prescriptionId = String(newPrescription.id);
-
-      // 2. Push to canister if online (using upsertPrescription — idempotent)
-      if (canUseCanister()) {
+      // 2. Push to Supabase if online
+      if (isNetworkOnline()) {
         try {
-          await _canisterActor.upsertPrescription(newPrescription);
-          const { removeFromQueue } = await import("../lib/hybridStorage");
-          removeFromQueue("upsertPrescription", new Set([prescriptionId]));
+          const { error } = await supabase
+            .from("prescriptions")
+            .insert([newPrescription]);
+          if (error) throw error;
         } catch (e) {
-          console.warn(
-            "Canister upsertPrescription failed, queuing for retry:",
-            e,
-          );
-          const { enqueueSync } = await import("../lib/hybridStorage");
-          enqueueSync({
-            timestamp: Date.now(),
-            type: "upsertPrescription",
-            entityId: prescriptionId,
-            data: newPrescription,
-          });
+          console.warn("Supabase insert prescription failed:", e);
         }
-      } else {
-        const { enqueueSync } = await import("../lib/hybridStorage");
-        enqueueSync({
-          timestamp: Date.now(),
-          type: "upsertPrescription",
-          entityId: prescriptionId,
-          data: newPrescription,
-        });
       }
 
       return newPrescription;
@@ -879,6 +820,19 @@ export function useDeletePrescription() {
         key,
         prescriptions.filter((p) => p.id !== id),
       );
+
+      // Delete from Supabase if online
+      if (isNetworkOnline()) {
+        try {
+          const { error } = await supabase
+            .from("prescriptions")
+            .delete()
+            .eq("id", id.toString());
+          if (error) throw error;
+        } catch (e) {
+          console.warn("Supabase delete prescription failed:", e);
+        }
+      }
     },
     onSuccess: (_, vars) =>
       qc.invalidateQueries({
@@ -917,35 +871,17 @@ export function useUpdatePrescription() {
       // 1. Always write to localStorage first (offline-first)
       saveToStorage(key, updated);
 
-      const prescriptionId = String(data.id);
-
-      // 2. Push to canister if online (using upsertPrescription — idempotent)
-      if (canUseCanister()) {
+      // 2. Push to Supabase if online
+      if (isNetworkOnline()) {
         try {
-          await _canisterActor.upsertPrescription(updatedPrescription);
-          const { removeFromQueue } = await import("../lib/hybridStorage");
-          removeFromQueue("upsertPrescription", new Set([prescriptionId]));
+          const { error } = await supabase
+            .from("prescriptions")
+            .update(updatedPrescription)
+            .eq("id", data.id.toString());
+          if (error) throw error;
         } catch (e) {
-          console.warn(
-            "Canister upsertPrescription failed, queuing for retry:",
-            e,
-          );
-          const { enqueueSync } = await import("../lib/hybridStorage");
-          enqueueSync({
-            timestamp: Date.now(),
-            type: "upsertPrescription",
-            entityId: prescriptionId,
-            data: updatedPrescription,
-          });
+          console.warn("Supabase update prescription failed:", e);
         }
-      } else {
-        const { enqueueSync } = await import("../lib/hybridStorage");
-        enqueueSync({
-          timestamp: Date.now(),
-          type: "upsertPrescription",
-          entityId: prescriptionId,
-          data: updatedPrescription,
-        });
       }
 
       return updatedPrescription;
@@ -957,7 +893,7 @@ export function useUpdatePrescription() {
   });
 }
 
-// ─── User profile ────────────────────────────────────────────────────────────
+// ─── User profile ──────────────────────────────────────────────────────────
 
 export function useGetCallerUserProfile() {
   return useQuery<UserProfile | null>({
@@ -990,14 +926,26 @@ export function useSaveCallerUserProfile() {
     mutationFn: async (profile: UserProfile) => {
       const email = getDoctorEmail();
       localStorage.setItem(`doctor_profile_${email}`, JSON.stringify(profile));
+
+      // Sync to Supabase if online
+      if (isNetworkOnline()) {
+        try {
+          const { error } = await supabase
+            .from("user_profiles")
+            .upsert({ email, profile }, { onConflict: "email" });
+          if (error) throw error;
+        } catch (e) {
+          console.warn("Supabase upsert user profile failed:", e);
+        }
+      }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["userProfile"] }),
   });
 }
 
-// ─── Clinical Data Engine Hooks (localStorage-backed, canister-ready) ─────────
+// ─── Clinical Data Engine Hooks (localStorage-backed, Supabase-ready) ─────────
 // These hooks store data in localStorage with unique keys per entity type.
-// When the hybrid backend is connected, the same data will flow through the canister.
+// When the backend is connected, the same data will flow through Supabase.
 
 const CLINICAL_STORAGE_KEY = "medicare_clinical_data";
 
@@ -1020,8 +968,8 @@ function saveClinicalEntities<T extends { id: unknown; updatedAt?: unknown }>(
   entityType: string,
   items: T[],
 ): void {
-  // Sync-aware write: writes locally AND enqueues/pushes to canister for all syncable entity types
-  saveClinicalEntitiesWithSync(entityType, items, _canisterActor);
+  // Sync-aware write: writes locally AND pushes to Supabase for syncable entity types
+  saveClinicalEntitiesWithSync(entityType, items);
 }
 
 function nextClinicalId<T extends { id: unknown }>(items: T[]): bigint {
@@ -1034,7 +982,7 @@ function nextClinicalId<T extends { id: unknown }>(items: T[]): bigint {
   );
 }
 
-// ── Encounters ────────────────────────────────────────────────────────────────
+// ── Encounters ───────────────────────────────────────────────────────────────
 
 export function useGetEncountersByPatient(patientId: bigint | null) {
   return useQuery<Encounter[]>({
@@ -1048,7 +996,7 @@ export function useGetEncountersByPatient(patientId: bigint | null) {
   });
 }
 
-// ── Observations ─────────────────────────────────────────────────────────────
+// ── Observations ───────────────────────────────────────────────────────────
 
 export function useGetObservationsByPatient(patientId: bigint | null) {
   return useQuery<Observation[]>({
@@ -1113,7 +1061,7 @@ export function useCreateObservation() {
   });
 }
 
-// ── Clinical Orders ───────────────────────────────────────────────────────────
+// ── Clinical Orders ──────────────────────────────────────────────────────────
 
 export function useGetOrdersByPatient(patientId: bigint | null) {
   return useQuery<ClinicalOrder[]>({
@@ -1212,7 +1160,7 @@ export function useUpdateOrderStatus() {
   });
 }
 
-// ── Clinical Notes ────────────────────────────────────────────────────────────
+// ── Clinical Notes ──────────────────────────────────────────────────────────
 
 export function useGetClinicalNotesByPatient(patientId: bigint | null) {
   return useQuery<ClinicalNote[]>({
@@ -1303,7 +1251,7 @@ export function useUpdateClinicalNote() {
   });
 }
 
-// ── Clinical Alerts ───────────────────────────────────────────────────────────
+// ── Clinical Alerts ──────────────────────────────────────────────────────────
 
 export function useGetAlertsByPatient(patientId: bigint | null) {
   return useQuery<ClinicalAlert[]>({
@@ -1351,7 +1299,7 @@ export function useAcknowledgeAlert() {
   });
 }
 
-// ── Beds ──────────────────────────────────────────────────────────────────────
+// ── Beds ─────────────────────────────────────────────────────────────────────
 
 export function useGetAllBeds() {
   return useQuery<BedRecord[]>({
@@ -1579,6 +1527,21 @@ export function useAdmitPatient() {
       );
       saveToStorage(key, updated);
 
+      // Push to Supabase if online
+      if (isNetworkOnline()) {
+        try {
+          for (const patient of updated) {
+            const { error } = await supabase
+              .from("patients")
+              .update(patient)
+              .eq("id", patient.id.toString());
+            if (error) throw error;
+          }
+        } catch (e) {
+          console.warn("Supabase update patient admission failed:", e);
+        }
+      }
+
       // 2. Create admission history record
       const newRecord: AdmissionHistory = {
         id: `adm_${Date.now()}_${Math.random().toString(36).slice(2)}`,
@@ -1663,6 +1626,21 @@ export function useDischargePatient() {
       );
       saveToStorage(key, updated);
 
+      // Push to Supabase if online
+      if (isNetworkOnline()) {
+        try {
+          for (const patient of updated) {
+            const { error } = await supabase
+              .from("patients")
+              .update(patient)
+              .eq("id", patient.id.toString());
+            if (error) throw error;
+          }
+        } catch (e) {
+          console.warn("Supabase update patient discharge failed:", e);
+        }
+      }
+
       // Mark active admission as discharged
       const admissions = loadAdmissionHistory(data.patientId);
       const updatedAdmissions = admissions.map((a) =>
@@ -1732,22 +1710,6 @@ export function savePrescriptionRecords(
       prescriptionRecordsKey(patientId),
       JSON.stringify(records),
     );
-    // Enqueue finalized records for cloud sync so other devices see them
-    const syncable = records.filter(
-      (r) => r.status === "active" || r.status === "approved",
-    );
-    if (syncable.length > 0) {
-      import("../lib/hybridStorage").then(({ enqueueSync }) => {
-        for (const rec of syncable) {
-          enqueueSync({
-            timestamp: Date.now(),
-            type: "upsertPrescription",
-            entityId: rec.id,
-            data: rec,
-          });
-        }
-      });
-    }
   } catch {}
 }
 
@@ -1865,7 +1827,7 @@ export function useApprovePrescriptionRecord() {
   });
 }
 
-// ── Drug Reminders ─────────────────────────────────────────────────────────────
+// ── Drug Reminders ──────────────────────────────────────────────────────────
 
 export function drugRemindersKey(patientId: string | bigint): string {
   return `drugReminders_${patientId}`;
@@ -2035,14 +1997,17 @@ export function useGetAppointmentsQuery() {
   return useQuery<Appointment[]>({
     queryKey: ["appointments"],
     queryFn: async () => {
-      if (canUseCanister()) {
+      if (isNetworkOnline()) {
         try {
-          const sinceMs =
-            BigInt(Date.now() - 30 * 24 * 60 * 60 * 1000) * 1_000_000n;
-          const remote = (await _canisterActor.getAppointmentsSince(
-            sinceMs,
-          )) as Appointment[];
-          if (Array.isArray(remote) && remote.length > 0) {
+          const { data, error } = await supabase
+            .from("appointments")
+            .select("*")
+            .gte(
+              "created_at",
+              new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+            );
+          if (error) throw error;
+          if (Array.isArray(data) && data.length > 0) {
             const local = (() => {
               try {
                 return JSON.parse(
@@ -2052,11 +2017,12 @@ export function useGetAppointmentsQuery() {
                 return [] as Appointment[];
               }
             })();
-            const merged = mergeArraysById(local, remote);
+            const merged = mergeArraysById(local, data as Appointment[]);
             localStorage.setItem("clinic_appointments", JSON.stringify(merged));
             return merged;
           }
-        } catch {
+        } catch (err) {
+          console.error("Error fetching appointments from Supabase:", err);
           // Fall through to localStorage
         }
       }
@@ -2077,15 +2043,18 @@ export function useGetQueueQuery(date?: string) {
   return useQuery<SerialQueueEntry[]>({
     queryKey: ["serialQueue", queueDate],
     queryFn: async () => {
-      if (canUseCanister()) {
+      if (isNetworkOnline()) {
         try {
-          const sinceMs =
-            BigInt(Date.now() - 2 * 24 * 60 * 60 * 1000) * 1_000_000n;
-          const remote = (await _canisterActor.getQueueEntriesSince(
-            sinceMs,
-          )) as SerialQueueEntry[];
-          if (Array.isArray(remote)) {
-            const todayEntries = remote.filter(
+          const { data, error } = await supabase
+            .from("serial_queue_entries")
+            .select("*")
+            .gte(
+              "created_at",
+              new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+            );
+          if (error) throw error;
+          if (Array.isArray(data)) {
+            const todayEntries = (data as SerialQueueEntry[]).filter(
               (e) => (e.queueDate ?? queueDate) === queueDate,
             );
             if (todayEntries.length > 0) {
@@ -2104,7 +2073,8 @@ export function useGetQueueQuery(date?: string) {
               return merged;
             }
           }
-        } catch {
+        } catch (err) {
+          console.error("Error fetching queue from Supabase:", err);
           // Fall through to localStorage
         }
       }
@@ -2164,6 +2134,19 @@ export function useReassignConsultant() {
               );
             }
           } catch {}
+        }
+      }
+
+      // Push to Supabase if online
+      if (isNetworkOnline()) {
+        try {
+          const { error } = await supabase
+            .from("patients")
+            .update({ consultantAssignment: assignment })
+            .eq("id", data.patientId.toString());
+          if (error) throw error;
+        } catch (e) {
+          console.warn("Supabase update consultant assignment failed:", e);
         }
       }
 
