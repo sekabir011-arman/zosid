@@ -56,7 +56,6 @@ import MoneyReceipt, { ReceiptsHistoryList } from "../components/MoneyReceipt";
 import PatientForm, { type PatientFormData } from "../components/PatientForm";
 import { useEmailAuth } from "../hooks/useEmailAuth";
 import {
-  _canisterActorRef,
   useCreatePatient,
   useGetAllPatients,
 } from "../hooks/useQueries";
@@ -65,6 +64,7 @@ import { useReceipts } from "../hooks/useReceipts";
 import { usePublicBookings } from "../hooks/usePublicBookings";
 import { enqueueSync } from "../lib/hybridStorage";
 import { buildFollowUpMessage } from "../lib/whatsappTemplates";
+import { supabase } from "../lib/supabase";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -136,15 +136,71 @@ function saveSerials(data: SerialEntry[]) {
   localStorage.setItem(todayKey(), JSON.stringify(data));
 }
 
+// ─── Supabase load helpers ────────────────────────────────────────────────────
+
+/** Fetch appointments from Supabase and sync to localStorage */
+async function loadAppointmentsFromSupabase(): Promise<AppointmentEntry[]> {
+  try {
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("*");
+
+    if (error) {
+      console.warn("Failed to load appointments from Supabase:", error);
+      return loadAppointments(); // Fallback to localStorage
+    }
+
+    if (data && data.length > 0) {
+      // Save to localStorage for offline access
+      localStorage.setItem(
+        "clinic_appointments",
+        JSON.stringify(data.filter((d: any) => !d._isPublic)),
+      );
+      return data as AppointmentEntry[];
+    }
+
+    return loadAppointments(); // Fallback to localStorage
+  } catch (e) {
+    console.warn("Supabase load appointments failed, using localStorage:", e);
+    return loadAppointments();
+  }
+}
+
+/** Fetch serials from Supabase for today and sync to localStorage */
+async function loadSerialsFromSupabase(): Promise<SerialEntry[]> {
+  try {
+    const today = todayStr();
+    const { data, error } = await supabase
+      .from("queue_entries")
+      .select("*")
+      .eq("queueDate", today);
+
+    if (error) {
+      console.warn("Failed to load serials from Supabase:", error);
+      return loadSerials(); // Fallback to localStorage
+    }
+
+    if (data && data.length > 0) {
+      // Save to localStorage for offline access
+      localStorage.setItem(todayKey(), JSON.stringify(data));
+      return data as SerialEntry[];
+    }
+
+    return loadSerials(); // Fallback to localStorage
+  } catch (e) {
+    console.warn("Supabase load serials failed, using localStorage:", e);
+    return loadSerials();
+  }
+}
+
 // ─── Canister sync helpers ────────────────────────────────────────────────────
 
 /** Push appointment changes to the canister — fire-and-forget, never throws */
-async function syncAppointmentToCanister(
+async function syncAppointmentToSupabase(
   op: "create" | "update" | "delete",
   entry: AppointmentEntry,
 ): Promise<void> {
-  const actor = _canisterActorRef();
-  if (!actor || !navigator.onLine) {
+  if (!navigator.onLine) {
     enqueueSync({
       timestamp: Date.now(),
       operation: op,
@@ -154,14 +210,24 @@ async function syncAppointmentToCanister(
     });
     return;
   }
+
   try {
     if (op === "delete") {
-      await actor.deleteAppointment(entry.id);
+      const { error } = await supabase
+        .from("appointments")
+        .delete()
+        .eq("id", entry.id);
+
+      if (error) throw error;
     } else {
-      await actor.bulkUpsertAppointments([entry]);
+      const { error } = await supabase
+        .from("appointments")
+        .upsert([entry]);
+
+      if (error) throw error;
     }
   } catch (e) {
-    console.warn("Canister appointment sync failed, queuing:", e);
+    console.warn("Supabase appointment sync failed, queuing:", e);
     enqueueSync({
       timestamp: Date.now(),
       operation: op,
@@ -172,14 +238,14 @@ async function syncAppointmentToCanister(
   }
 }
 
-/** Push queue-entry changes to the canister — fire-and-forget, never throws */
-async function syncQueueEntryToCanister(
+/** Push queue-entry changes to Supabase — fire-and-forget, never throws */
+async function syncQueueEntryToSupabase(
   op: "create" | "update" | "delete",
   entry: SerialEntry,
 ): Promise<void> {
-  const actor = _canisterActorRef();
   const enriched = { ...entry, queueDate: todayStr() };
-  if (!actor || !navigator.onLine) {
+
+  if (!navigator.onLine) {
     enqueueSync({
       timestamp: Date.now(),
       operation: op,
@@ -189,14 +255,25 @@ async function syncQueueEntryToCanister(
     });
     return;
   }
+
   try {
     if (op === "delete") {
-      await actor.deleteQueueEntry(entry.id);
+      const { error } = await supabase
+        .from("queue_entries")
+        .delete()
+        .eq("id", entry.id);
+
+      if (error) throw error;
     } else {
-      await actor.bulkUpsertQueueEntries([enriched]);
+      const { error } = await supabase
+        .from("queue_entries")
+        .upsert([enriched]);
+
+      if (error) throw error;
     }
   } catch (e) {
-    console.warn("Canister queue-entry sync failed, queuing:", e);
+    console.warn("Supabase queue-entry sync failed, queuing:", e);
+
     enqueueSync({
       timestamp: Date.now(),
       operation: op,
@@ -497,72 +574,83 @@ const apptStatusConfig: Record<
 // ─── Doctor Serial Tab ────────────────────────────────────────────────────────
 
 function DoctorSerialTab() {
-  const { entries, loading, error, fetchTodayQueue, addEntry, updateStatus, deleteEntry, resetQueue } = useSerialQueue();
+  const [serials, setSerials] = useState<SerialEntry[]>(loadSerials);
   const [addOpen, setAddOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [form, setForm] = useState({ name: "", phone: "" });
   const { currentDoctor } = useEmailAuth();
   const isDoctor = !currentDoctor || currentDoctor.role === "doctor";
 
-  // Load queue on mount
+  // Load serials from Supabase on mount
   useEffect(() => {
-    fetchTodayQueue();
-  }, [fetchTodayQueue]);
+    const loadData = async () => {
+      const data = await loadSerialsFromSupabase();
+      setSerials(data);
+    };
+    loadData();
+  }, []);
 
-  async function addSerial() {
+  const persist = (data: SerialEntry[]) => {
+    setSerials(data);
+    saveSerials(data);
+    const nowServing = data.find((s) => s.status === "in-progress") || null;
+    const queue = data.filter((s) => s.status === "waiting");
+    localStorage.setItem(
+      "medicare_serial_queue",
+      JSON.stringify({ nowServing, queue }),
+    );
+  };
+
+  function addSerial() {
     if (!form.name.trim()) {
       toast.error("Patient name is required");
       return;
     }
-    try {
-      const next = entries.length > 0 ? Math.max(...entries.map((s) => s.serialNumber)) + 1 : 1;
-      await addEntry({
-        patientName: form.name.trim(),
-        phone: form.phone.trim(),
-        serialNumber: next,
-        status: "waiting",
-        queueDate: todayStr(),
-      });
-      setForm({ name: "", phone: "" });
-      setAddOpen(false);
-      toast.success(`Serial #${next} added for ${form.name.trim()}`);
-    } catch (err) {
-      toast.error("Failed to add serial");
-    }
+    const next =
+      serials.length > 0 ? Math.max(...serials.map((s) => s.serial)) + 1 : 1;
+    const entry: SerialEntry = {
+      id: uid(),
+      serial: next,
+      patientName: form.name.trim(),
+      phone: form.phone.trim(),
+      arrivalTime: nowTime(),
+      status: "waiting",
+    };
+    persist([...serials, entry]);
+    setForm({ name: "", phone: "" });
+    setAddOpen(false);
+    toast.success(`Serial #${next} added for ${entry.patientName}`);
+    syncQueueEntryToSupabase("create", entry);
   }
 
-  async function handleUpdateStatus(id: string, status: SerialStatus) {
-    try {
-      await updateStatus(id, status);
-      toast.success("Status updated");
-    } catch (err) {
-      toast.error("Failed to update status");
-    }
+  function updateStatus(id: string, status: SerialStatus) {
+    const updated = serials.map((s) => (s.id === id ? { ...s, status } : s));
+    persist(updated);
+    const entry = updated.find((s) => s.id === id);
+    if (entry) syncQueueEntryToSupabase("update", entry);
   }
 
-  async function handleDeleteSerial(id: string) {
-    try {
-      await deleteEntry(id);
-      toast.success("Serial removed");
-    } catch (err) {
-      toast.error("Failed to remove serial");
-    }
+  function deleteSerial(id: string) {
+    const entry = serials.find((s) => s.id === id);
+    persist(serials.filter((s) => s.id !== id));
+    toast.success("Serial removed");
+    if (entry) syncQueueEntryToSupabase("delete", entry);
   }
 
-  async function handleResetQueue() {
-    try {
-      await resetQueue(todayStr());
-      setResetOpen(false);
-      toast.success("Queue reset for today");
-    } catch (err) {
-      toast.error("Failed to reset queue");
+  function resetQueue() {
+    // Delete all current entries from canister before clearing
+    for (const entry of serials) {
+      syncQueueEntryToSupabase("delete", entry);
     }
+    persist([]);
+    setResetOpen(false);
+    toast.success("Queue reset for today");
   }
 
   const counts = {
-    waiting: entries.filter((s) => s.status === "waiting").length,
-    inProgress: entries.filter((s) => s.status === "in-progress").length,
-    done: entries.filter((s) => s.status === "done").length,
+    waiting: serials.filter((s) => s.status === "waiting").length,
+    inProgress: serials.filter((s) => s.status === "in-progress").length,
+    done: serials.filter((s) => s.status === "done").length,
   };
 
   const todayLabel = new Date().toLocaleDateString("en-BD", {
@@ -571,16 +659,6 @@ function DoctorSerialTab() {
     month: "long",
     day: "numeric",
   });
-
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center text-destructive">
-        <AlertCircle className="w-10 h-10 mb-3" />
-        <p className="font-medium">Failed to load queue</p>
-        <p className="text-sm mt-1">{error}</p>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4">
@@ -610,7 +688,6 @@ function DoctorSerialTab() {
             onClick={() => setResetOpen(true)}
             className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10"
             data-ocid="serial.reset_button"
-            disabled={loading}
           >
             <RefreshCcw className="w-3.5 h-3.5" />
             Reset Queue
@@ -620,7 +697,6 @@ function DoctorSerialTab() {
             className="gap-1.5"
             onClick={() => setAddOpen(true)}
             data-ocid="serial.open_modal_button"
-            disabled={loading}
           >
             <Plus className="w-4 h-4" />
             Add Serial
@@ -646,11 +722,7 @@ function DoctorSerialTab() {
         </div>
       </div>
 
-      {loading && entries.length === 0 ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : entries.length === 0 ? (
+      {serials.length === 0 ? (
         <div
           className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground"
           data-ocid="serial.empty_state"
@@ -686,7 +758,7 @@ function DoctorSerialTab() {
             </thead>
             <tbody>
               <AnimatePresence>
-                {entries.map((s, idx) => (
+                {serials.map((s, idx) => (
                   <motion.tr
                     key={s.id}
                     initial={{ opacity: 0, x: -8 }}
@@ -698,7 +770,7 @@ function DoctorSerialTab() {
                   >
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-primary/10 text-primary font-bold text-xs">
-                        {s.serialNumber}
+                        {s.serial}
                       </span>
                     </td>
                     <td className="px-4 py-3 font-medium text-foreground">
@@ -708,7 +780,7 @@ function DoctorSerialTab() {
                       {s.phone || "—"}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">
-                      {s.addedAt ? new Date(s.addedAt).toLocaleTimeString("en-BD") : "—"}
+                      {s.arrivalTime}
                     </td>
                     <td className="px-4 py-3">
                       <Badge
@@ -725,7 +797,7 @@ function DoctorSerialTab() {
                             size="sm"
                             variant="ghost"
                             className="h-7 px-2 text-blue-600 hover:bg-blue-50 text-xs"
-                            onClick={() => handleUpdateStatus(s.id, "in-progress")}
+                            onClick={() => updateStatus(s.id, "in-progress")}
                             data-ocid={`serial.secondary_button.${idx + 1}`}
                           >
                             Start
@@ -736,7 +808,7 @@ function DoctorSerialTab() {
                             size="sm"
                             variant="ghost"
                             className="h-7 px-2 text-emerald-600 hover:bg-emerald-50 text-xs"
-                            onClick={() => handleUpdateStatus(s.id, "done")}
+                            onClick={() => updateStatus(s.id, "done")}
                             data-ocid={`serial.primary_button.${idx + 1}`}
                           >
                             <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
@@ -747,7 +819,7 @@ function DoctorSerialTab() {
                           size="sm"
                           variant="ghost"
                           className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
-                          onClick={() => handleDeleteSerial(s.id)}
+                          onClick={() => deleteSerial(s.id)}
                           data-ocid={`serial.delete_button.${idx + 1}`}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -800,7 +872,7 @@ function DoctorSerialTab() {
             >
               Cancel
             </Button>
-            <Button onClick={addSerial} data-ocid="serial.submit_button" disabled={loading}>
+            <Button onClick={addSerial} data-ocid="serial.submit_button">
               Add to Queue
             </Button>
           </DialogFooter>
@@ -817,7 +889,7 @@ function DoctorSerialTab() {
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This will clear all {entries.length} serial entries for today.
+            This will clear all {serials.length} serial entries for today.
           </p>
           <DialogFooter>
             <Button
@@ -829,9 +901,8 @@ function DoctorSerialTab() {
             </Button>
             <Button
               variant="destructive"
-              onClick={handleResetQueue}
+              onClick={resetQueue}
               data-ocid="serial.confirm_button"
-              disabled={loading}
             >
               Reset Queue
             </Button>
@@ -927,6 +998,15 @@ function ChamberAppointmentsTab() {
     registerNumber: "",
   };
   const [form, setForm] = useState(emptyForm);
+
+  // Load appointments from Supabase on mount
+  useEffect(() => {
+    const loadData = async () => {
+      const data = await loadAppointmentsFromSupabase();
+      setAppointments(data);
+    };
+    loadData();
+  }, []);
 
   const persist = (data: AppointmentEntry[]) => {
     setAppointments(data);
@@ -1050,7 +1130,7 @@ function ChamberAppointmentsTab() {
         appointments.map((a) => (a.id === editTarget.id ? updatedEntry : a)),
       );
       toast.success("Appointment updated");
-      syncAppointmentToCanister("update", updatedEntry);
+      syncAppointmentToSupabase("update", updatedEntry);
     } else {
       const entry: AppointmentEntry = {
         id: uid(),
@@ -1071,7 +1151,7 @@ function ChamberAppointmentsTab() {
       toast.success(
         `Appointment scheduled for ${entry.patientName} — Serial #${serial}`,
       );
-      syncAppointmentToCanister("create", entry);
+      syncAppointmentToSupabase("create", entry);
     }
     setAddOpen(false);
   }
@@ -1080,7 +1160,7 @@ function ChamberAppointmentsTab() {
     const entry = appointments.find((a) => a.id === id);
     persist(appointments.filter((a) => a.id !== id));
     toast.success("Appointment deleted");
-    if (entry) syncAppointmentToCanister("delete", entry);
+    if (entry) syncAppointmentToSupabase("delete", entry);
   }
 
   const chamberOnly = appointments.filter(
@@ -1639,6 +1719,15 @@ function AdmittedPatientsTab() {
   };
   const [form, setForm] = useState(emptyForm);
 
+  // Load appointments from Supabase on mount
+  useEffect(() => {
+    const loadData = async () => {
+      const data = await loadAppointmentsFromSupabase();
+      setAppointments(data);
+    };
+    loadData();
+  }, []);
+
   const persist = (data: AppointmentEntry[]) => {
     setAppointments(data);
     saveAppointments(data);
@@ -1768,7 +1857,7 @@ function AdmittedPatientsTab() {
         appointments.map((a) => (a.id === editTarget.id ? updatedEntry : a)),
       );
       toast.success("Admission appointment updated");
-      syncAppointmentToCanister("update", updatedEntry);
+      syncAppointmentToSupabase("update", updatedEntry);
     } else {
       const entry: AppointmentEntry = {
         id: uid(),
@@ -1792,7 +1881,7 @@ function AdmittedPatientsTab() {
       toast.success(
         `Admission scheduled for ${entry.patientName} — Daily Serial #${serial}`,
       );
-      syncAppointmentToCanister("create", entry);
+      syncAppointmentToSupabase("create", entry);
     }
     setAddOpen(false);
   }
@@ -1806,7 +1895,7 @@ function AdmittedPatientsTab() {
     const entry = updated.find((a) => a.id === timePickerTarget.id);
     setTimePickerTarget(null);
     toast.success(`Visit time set to ${timePickerVal}`);
-    if (entry) syncAppointmentToCanister("update", entry);
+    if (entry) syncAppointmentToSupabase("update", entry);
   }
 
   // Auto-generate today's admission slot for admitted patients from visit form
